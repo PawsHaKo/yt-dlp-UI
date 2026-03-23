@@ -162,6 +162,20 @@
             color: #2a454e;
         }
 
+        .chip-btn {
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: transform 0.12s ease, box-shadow 0.12s ease;
+        }
+
+        .chip-btn:hover {
+            transform: translateY(-1px);
+        }
+
+        .chip-btn.active {
+            box-shadow: inset 0 0 0 1px #0b7285;
+        }
+
         .chip-queued {
             background: #f0f4f6;
             color: var(--queued);
@@ -295,6 +309,26 @@
             background: #fff3f2;
         }
 
+        .btn-delete {
+            border: 1px solid #b23a32;
+            border-radius: 8px;
+            background: #fff;
+            color: #a43f36;
+            font-size: 0.8rem;
+            font-weight: 700;
+            padding: 0.26rem 0.64rem;
+            margin-left: 0.45rem;
+        }
+
+        .btn-delete:hover:not(:disabled) {
+            background: #fff3f2;
+        }
+
+        .btn-delete:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
         #fileList {
             margin: 0;
             padding-left: 0;
@@ -358,6 +392,14 @@
                         placeholder="貼上 YouTube 網址（可用換行、空白或逗號分隔）"
                     ></textarea>
                     <div class="toolbar">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <label for="concurrencySelect" style="font-size:0.86rem;color:#4f6770;">同時下載</label>
+                            <select id="concurrencySelect" style="border:1px solid #acc2cc;border-radius:8px;padding:0.28rem 0.42rem;font-size:0.86rem;">
+                                <option value="1">1</option>
+                                <option value="2">2</option>
+                                <option value="3">3</option>
+                            </select>
+                        </div>
                         <p class="hint">送出前會自動去重並整理格式。</p>
                         <button id="submitBtn" type="submit" class="btn-submit">加入佇列</button>
                     </div>
@@ -401,9 +443,12 @@
         const queueEmptyEl = document.getElementById("queueEmpty");
         const queueSummaryEl = document.getElementById("queueSummary");
         const fileListEl = document.getElementById("fileList");
+        const concurrencySelectEl = document.getElementById("concurrencySelect");
         const urlsEl = document.getElementById("youtubeUrls");
         const submitBtnEl = document.getElementById("submitBtn");
         const formEl = document.getElementById("downloadForm");
+        let allJobs = [];
+        const activeStatuses = new Set();
 
         formEl.addEventListener("submit", async (event) => {
             event.preventDefault();
@@ -443,30 +488,80 @@
         });
 
         queueListEl.addEventListener("click", async (event) => {
-            const button = event.target.closest("button[data-retry-id]");
-            if (!button) {
+            const retryBtn = event.target.closest("button[data-retry-id]");
+            if (retryBtn) {
+                const jobId = retryBtn.getAttribute("data-retry-id");
+                retryBtn.disabled = true;
+
+                try {
+                    const response = await fetch(`/jobs/${jobId}/retry`, { method: "POST" });
+                    const payload = await response.json();
+
+                    if (!response.ok) {
+                        alert(payload.error || "重試失敗");
+                        retryBtn.disabled = false;
+                        return;
+                    }
+
+                    setHint("已建立重試任務。");
+                    await refreshJobs();
+                } catch (error) {
+                    alert("重試時發生網路錯誤");
+                    retryBtn.disabled = false;
+                }
                 return;
             }
 
-            const jobId = button.getAttribute("data-retry-id");
-            button.disabled = true;
+            const deleteBtn = event.target.closest("button[data-delete-id]");
+            if (!deleteBtn) {
+                return;
+            }
+
+            const jobId = deleteBtn.getAttribute("data-delete-id");
+            if (!jobId) {
+                return;
+            }
+            deleteBtn.disabled = true;
 
             try {
-                const response = await fetch(`/jobs/${jobId}/retry`, { method: "POST" });
+                const response = await fetch(`/jobs/${jobId}`, { method: "DELETE" });
                 const payload = await response.json();
 
                 if (!response.ok) {
-                    alert(payload.error || "重試失敗");
-                    button.disabled = false;
+                    alert(payload.error || "刪除失敗");
+                    deleteBtn.disabled = false;
                     return;
                 }
 
-                setHint("已建立重試任務。");
+                setHint("任務已刪除。");
                 await refreshJobs();
             } catch (error) {
-                alert("重試時發生網路錯誤");
-                button.disabled = false;
+                alert("刪除時發生網路錯誤");
+                deleteBtn.disabled = false;
             }
+        });
+
+        queueSummaryEl.addEventListener("click", (event) => {
+            const target = event.target.closest("button[data-filter]");
+            if (!target) {
+                return;
+            }
+
+            const value = target.getAttribute("data-filter");
+            if (!value) {
+                return;
+            }
+
+            if (value === "all") {
+                activeStatuses.clear();
+            } else if (activeStatuses.has(value)) {
+                activeStatuses.delete(value);
+            } else {
+                activeStatuses.add(value);
+            }
+
+            renderSummary(allJobs);
+            renderQueue(getFilteredJobs(allJobs));
         });
 
         function normalizeInputUrls(input) {
@@ -515,25 +610,30 @@
 
             const total = jobs.length;
             queueSummaryEl.innerHTML = `
-                <span class="chip">總數 ${total}</span>
-                <span class="chip chip-queued">排隊 ${counts.queued}</span>
-                <span class="chip chip-downloading">下載中 ${counts.downloading}</span>
-                <span class="chip chip-postprocessing">後處理 ${counts.postprocessing}</span>
-                <span class="chip chip-completed">完成 ${counts.completed}</span>
-                <span class="chip chip-failed">失敗 ${counts.failed}</span>
+                <button class="chip chip-btn ${activeStatuses.size === 0 ? "active" : ""}" data-filter="all">全部 ${total}</button>
+                <button class="chip chip-queued chip-btn ${activeStatuses.has("queued") ? "active" : ""}" data-filter="queued">排隊 ${counts.queued}</button>
+                <button class="chip chip-downloading chip-btn ${activeStatuses.has("downloading") ? "active" : ""}" data-filter="downloading">下載中 ${counts.downloading}</button>
+                <button class="chip chip-postprocessing chip-btn ${activeStatuses.has("postprocessing") ? "active" : ""}" data-filter="postprocessing">後處理 ${counts.postprocessing}</button>
+                <button class="chip chip-completed chip-btn ${activeStatuses.has("completed") ? "active" : ""}" data-filter="completed">完成 ${counts.completed}</button>
+                <button class="chip chip-failed chip-btn ${activeStatuses.has("failed") ? "active" : ""}" data-filter="failed">失敗 ${counts.failed}</button>
             `;
+        }
+
+        function getFilteredJobs(jobs) {
+            if (activeStatuses.size === 0) {
+                return jobs;
+            }
+            return jobs.filter((job) => activeStatuses.has(job.status));
         }
 
         function renderQueue(jobs) {
             if (!jobs.length) {
                 queueEmptyEl.style.display = "block";
                 queueListEl.innerHTML = "";
-                renderSummary([]);
                 return;
             }
 
             queueEmptyEl.style.display = "none";
-            renderSummary(jobs);
 
             queueListEl.innerHTML = jobs
                 .map((job) => {
@@ -546,9 +646,12 @@
                     const etaText = job.eta ? `剩餘 ${escapeHtml(job.eta)}` : "剩餘 -";
                     const createdAt = job.created_at ? new Date(job.created_at).toLocaleString("zh-TW", { hour12: false }) : "";
                     const errorHtml = job.error ? `<p class="job-error">${escapeHtml(job.error)}</p>` : "";
-                    const retryHtml = status === "failed"
-                        ? `<div class="job-actions"><button class="btn-retry" data-retry-id="${escapeHtml(job.id)}">重試</button></div>`
+                    const retryButton = status === "failed"
+                        ? `<button class="btn-retry" data-retry-id="${escapeHtml(job.id)}">重試</button>`
                         : "";
+                    const deleteDisabled = status === "downloading" || status === "postprocessing";
+                    const deleteButton = `<button class="btn-delete" data-delete-id="${escapeHtml(job.id)}" ${deleteDisabled ? "disabled" : ""}>刪除</button>`;
+                    const actionHtml = `<div class="job-actions">${retryButton}${deleteButton}</div>`;
 
                     return `
                         <article class="job">
@@ -569,7 +672,7 @@
                                 <span>${createdAt}</span>
                             </div>
                             ${errorHtml}
-                            ${retryHtml}
+                            ${actionHtml}
                         </article>
                     `;
                 })
@@ -602,6 +705,53 @@
             hint.style.color = isError ? "#b23a32" : "#4f6770";
         }
 
+        async function refreshSettings() {
+            try {
+                const response = await fetch("/settings");
+                const settings = await response.json();
+                if (!response.ok || !settings || !Number.isInteger(settings.max_concurrent_jobs)) {
+                    return;
+                }
+
+                const maxAllowed = Number.isInteger(settings.max_allowed) ? settings.max_allowed : 3;
+                const current = settings.max_concurrent_jobs;
+                const options = [];
+                for (let i = 1; i <= Math.max(1, maxAllowed); i += 1) {
+                    options.push(`<option value="${i}" ${i === current ? "selected" : ""}>${i}</option>`);
+                }
+                concurrencySelectEl.innerHTML = options.join("");
+            } catch (error) {
+                setHint("讀取下載設定失敗。", true);
+            }
+        }
+
+        concurrencySelectEl.addEventListener("change", async () => {
+            const value = Number(concurrencySelectEl.value);
+            if (!Number.isInteger(value) || value <= 0) {
+                return;
+            }
+            concurrencySelectEl.disabled = true;
+            try {
+                const response = await fetch("/settings", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ max_concurrent_jobs: value }),
+                });
+                const payload = await response.json();
+                if (!response.ok) {
+                    setHint(payload.error || "更新同時下載數失敗", true);
+                    await refreshSettings();
+                    return;
+                }
+                setHint(`同時下載數已更新為 ${payload.max_concurrent_jobs}。`);
+            } catch (error) {
+                setHint("更新同時下載數失敗。", true);
+                await refreshSettings();
+            } finally {
+                concurrencySelectEl.disabled = false;
+            }
+        });
+
         async function refreshJobs() {
             try {
                 const response = await fetch("/jobs");
@@ -609,8 +759,9 @@
                 if (!response.ok || !Array.isArray(jobs)) {
                     return;
                 }
-
-                renderQueue([...jobs].reverse());
+                allJobs = [...jobs].reverse();
+                renderSummary(allJobs);
+                renderQueue(getFilteredJobs(allJobs));
                 if (jobs.some((job) => job.status === "completed")) {
                     await refreshFiles();
                 }
@@ -633,7 +784,7 @@
         }
 
         async function bootstrap() {
-            await Promise.all([refreshJobs(), refreshFiles()]);
+            await Promise.all([refreshJobs(), refreshFiles(), refreshSettings()]);
             setInterval(() => {
                 refreshJobs();
                 refreshFiles();

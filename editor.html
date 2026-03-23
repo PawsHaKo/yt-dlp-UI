@@ -98,6 +98,22 @@
             border-right: 1px solid rgba(178, 58, 50, 0.7);
         }
 
+        .point-marker {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            transform: translateX(-1px);
+        }
+
+        .point-marker.start {
+            background: #1f8a4c;
+        }
+
+        .point-marker.end {
+            background: #1769aa;
+        }
+
         .grid {
             display: grid;
             gap: 0.7rem;
@@ -133,6 +149,30 @@
             gap: 0.5rem;
             align-items: center;
             margin-top: 0.7rem;
+        }
+
+        .row.spread {
+            justify-content: space-between;
+        }
+
+        .inline-control {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+        }
+
+        .inline-control label {
+            margin: 0;
+            font-size: 0.9rem;
+            color: var(--muted);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .inline-control select {
+            width: auto;
+            min-width: 90px;
         }
 
         button {
@@ -217,17 +257,15 @@
                     <button id="playBtn">播放 / 暫停</button>
                     <button id="rewindBtn">-10 秒</button>
                     <button id="forwardBtn">+10 秒</button>
+                    <button id="setStartBtn">開始 = 目前播放點</button>
+                    <button id="setEndBtn">結束 = 目前播放點</button>
+                    <button id="addRangeBtn" class="primary">新增刪除區塊</button>
+                    <button id="clearRangesBtn" class="warn">清空全部</button>
                     <label style="margin:0;">縮放
                         <input id="zoomRange" type="range" min="0" max="200" value="0" />
                     </label>
                     <span id="positionText" class="muted">0.00s / 0.00s</span>
                 </div>
-            </div>
-        </section>
-
-        <section class="panel">
-            <div class="panel-head">刪除區塊與音量</div>
-            <div class="panel-body">
                 <div class="grid">
                     <div>
                         <label for="startSec">開始秒數</label>
@@ -243,44 +281,36 @@
                         <div id="gainText" class="muted">0 dB</div>
                     </div>
                 </div>
-                <div class="row">
-                    <button id="setStartBtn">開始 = 目前播放點</button>
-                    <button id="setEndBtn">結束 = 目前播放點</button>
-                    <button id="addRangeBtn" class="primary">新增刪除區塊</button>
-                    <button id="clearRangesBtn" class="warn">清空全部</button>
-                </div>
                 <ul id="ranges"></ul>
+                <div class="row inline-control">
+                    <label for="outputFormat">輸出格式
+                        <select id="outputFormat">
+                            <option value="mp3">MP3</option>
+                            <option value="m4a">M4A</option>
+                        </select>
+                    </label>
+                    <button id="refreshPreviewBtn" class="primary">提交修改</button>
+                </div>
             </div>
         </section>
 
         <section class="panel">
             <div class="panel-head">預覽與提交</div>
             <div class="panel-body">
-                <div class="grid">
-                    <div>
-                        <label for="outputFormat">輸出格式</label>
-                        <select id="outputFormat">
-                            <option value="mp3">MP3</option>
-                            <option value="m4a">M4A</option>
-                        </select>
+                <div class="row spread">
+                    <div class="inline-control">
+                        <button id="previewPlayBtn">播放預覽 / 暫停</button>
+                        <span id="previewPositionText" class="muted">0.00s / 0.00s</span>
                     </div>
-                    <div>
-                        <label for="targetName">另存檔名（可空白）</label>
-                        <input id="targetName" type="text" placeholder="例如 my-edit.mp3" />
-                    </div>
-                </div>
-
-                <div class="row">
-                    <button id="refreshPreviewBtn" class="primary">提交修改並產生預覽</button>
                     <button id="discardPreviewBtn" class="warn">刪除預覽</button>
                 </div>
                 <div id="previewWaveform"></div>
-                <div class="row">
-                    <button id="previewPlayBtn">播放預覽 / 暫停</button>
-                    <span id="previewPositionText" class="muted">0.00s / 0.00s</span>
+                <div class="grid">
+                    <div>
+                        <label for="targetName">預設檔名（可編輯）</label>
+                        <input id="targetName" type="text" placeholder="輸出檔名" />
+                    </div>
                 </div>
-                <audio id="previewAudio" controls></audio>
-
                 <div class="row">
                     <button id="overwriteBtn" class="primary">確認並覆蓋</button>
                     <button id="saveAsBtn" class="primary">另存新檔</button>
@@ -306,7 +336,6 @@
         const rangeOverlayEl = document.getElementById("rangeOverlay");
         const outputFormatEl = document.getElementById("outputFormat");
         const targetNameEl = document.getElementById("targetName");
-        const previewAudioEl = document.getElementById("previewAudio");
         const previewPositionTextEl = document.getElementById("previewPositionText");
         const statusEl = document.getElementById("status");
 
@@ -329,6 +358,8 @@
         let duration = 0;
         let previewDuration = 0;
         let previewId = null;
+        let rangesFrozen = false;
+        let lastAutoTargetName = "";
         const deleteRanges = [];
 
         function setStatus(message, type = "") {
@@ -366,18 +397,29 @@
         }
 
         function renderRangeMarkers() {
-            if (!duration || !deleteRanges.length) {
+            if (!duration) {
                 rangeOverlayEl.innerHTML = "";
                 return;
             }
 
-            rangeOverlayEl.innerHTML = deleteRanges
+            const rangeHtml = deleteRanges
                 .map((range) => {
                     const left = Math.max(0, Math.min(100, (range.start_sec / duration) * 100));
                     const width = Math.max(0.5, ((range.end_sec - range.start_sec) / duration) * 100);
                     return `<div class="range-marker" style="left:${left}%;width:${width}%"></div>`;
                 })
                 .join("");
+
+            const startValue = Number(startSecEl.value);
+            const endValue = Number(endSecEl.value);
+            const startHtml = Number.isFinite(startValue) && startValue >= 0 && startValue <= duration
+                ? `<div class="point-marker start" style="left:${(startValue / duration) * 100}%"></div>`
+                : "";
+            const endHtml = Number.isFinite(endValue) && endValue >= 0 && endValue <= duration
+                ? `<div class="point-marker end" style="left:${(endValue / duration) * 100}%"></div>`
+                : "";
+
+            rangeOverlayEl.innerHTML = `${rangeHtml}${startHtml}${endHtml}`;
         }
 
         function resetPreviewWaveform() {
@@ -414,6 +456,21 @@
             gainTextEl.textContent = `${Number(gainDbEl.value).toFixed(1)} dB`;
         }
 
+        function buildDefaultTargetName() {
+            const source = String(sourceFile || "");
+            const dot = source.lastIndexOf(".");
+            const stem = dot > 0 ? source.slice(0, dot) : source;
+            return `${stem}_edited.${outputFormatEl.value}`;
+        }
+
+        function applyAutoTargetName() {
+            const autoName = buildDefaultTargetName();
+            if (!targetNameEl.value || targetNameEl.value === lastAutoTargetName) {
+                targetNameEl.value = autoName;
+            }
+            lastAutoTargetName = autoName;
+        }
+
         function renderRanges() {
             if (!deleteRanges.length) {
                 rangesEl.innerHTML = "<li>目前沒有刪除區塊。</li>";
@@ -425,12 +482,23 @@
                     return `
                         <li>
                             <span>#${index + 1} 刪除 ${range.start_sec.toFixed(2)}s - ${range.end_sec.toFixed(2)}s</span>
-                            <button data-remove-index="${index}" class="warn">移除</button>
+                            <button data-remove-index="${index}" class="warn" ${rangesFrozen ? "disabled" : ""}>移除</button>
                         </li>
                     `;
                 })
                 .join("");
             renderRangeMarkers();
+        }
+
+        function setRangesFrozen(frozen) {
+            rangesFrozen = Boolean(frozen);
+            startSecEl.disabled = rangesFrozen;
+            endSecEl.disabled = rangesFrozen;
+            setStartBtnEl.disabled = rangesFrozen;
+            setEndBtnEl.disabled = rangesFrozen;
+            addRangeBtnEl.disabled = rangesFrozen;
+            clearRangesBtnEl.disabled = rangesFrozen;
+            renderRanges();
         }
 
         function normalizeRange(start, end) {
@@ -448,6 +516,14 @@
             return { start_sec: s, end_sec: e };
         }
 
+        function enforceStartEndOrder() {
+            const startValue = Number(startSecEl.value);
+            const endValue = Number(endSecEl.value);
+            if (Number.isFinite(startValue) && Number.isFinite(endValue) && endValue <= startValue) {
+                endSecEl.value = "";
+            }
+        }
+
         async function deletePreview() {
             if (!previewId) {
                 return;
@@ -455,8 +531,6 @@
 
             const id = previewId;
             previewId = null;
-            previewAudioEl.removeAttribute("src");
-            previewAudioEl.load();
             resetPreviewWaveform();
 
             try {
@@ -471,6 +545,13 @@
                 return;
             }
 
+            if (wavesurfer && wavesurfer.isPlaying()) {
+                wavesurfer.pause();
+            }
+            if (previewWavesurfer && previewWavesurfer.isPlaying()) {
+                previewWavesurfer.pause();
+            }
+            setRangesFrozen(true);
             await deletePreview();
             setStatus("正在產生預覽...");
             refreshPreviewBtnEl.disabled = true;
@@ -494,13 +575,13 @@
                 }
 
                 previewId = payload.preview_id;
-                previewAudioEl.src = `${payload.preview_url}?t=${Date.now()}`;
-                mountPreviewWaveform(previewAudioEl.src);
+                mountPreviewWaveform(`${payload.preview_url}?t=${Date.now()}`);
                 setStatus("預覽已更新，可直接播放確認。", "ok");
             } catch (error) {
                 setStatus("預覽建立失敗，請稍後重試。", "error");
             } finally {
                 refreshPreviewBtnEl.disabled = false;
+                setRangesFrozen(false);
             }
         }
 
@@ -534,12 +615,9 @@
                 }
 
                 previewId = null;
-                previewAudioEl.removeAttribute("src");
-                previewAudioEl.load();
                 resetPreviewWaveform();
 
-                const backupInfo = data.backup_file ? `，備份：${data.backup_file}` : "";
-                setStatus(`完成：${data.file_name}${backupInfo}`, "ok");
+                setStatus(`完成：${data.file_name}`, "ok");
             } catch (error) {
                 setStatus("提交失敗，請稍後重試。", "error");
             } finally {
@@ -611,12 +689,15 @@
             });
 
             gainDbEl.addEventListener("input", updateGainText);
+            outputFormatEl.addEventListener("change", applyAutoTargetName);
 
             setStartBtnEl.addEventListener("click", () => {
                 if (!wavesurfer) {
                     return;
                 }
                 startSecEl.value = wavesurfer.getCurrentTime().toFixed(2);
+                enforceStartEndOrder();
+                renderRangeMarkers();
             });
 
             setEndBtnEl.addEventListener("click", () => {
@@ -624,9 +705,23 @@
                     return;
                 }
                 endSecEl.value = wavesurfer.getCurrentTime().toFixed(2);
+                enforceStartEndOrder();
+                renderRangeMarkers();
+            });
+
+            startSecEl.addEventListener("input", () => {
+                enforceStartEndOrder();
+                renderRangeMarkers();
+            });
+            endSecEl.addEventListener("input", () => {
+                enforceStartEndOrder();
+                renderRangeMarkers();
             });
 
             addRangeBtnEl.addEventListener("click", () => {
+                if (rangesFrozen) {
+                    return;
+                }
                 const start = Number(startSecEl.value);
                 const end = Number(endSecEl.value);
                 const range = normalizeRange(start, end);
@@ -641,6 +736,9 @@
             });
 
             clearRangesBtnEl.addEventListener("click", () => {
+                if (rangesFrozen) {
+                    return;
+                }
                 deleteRanges.length = 0;
                 renderRanges();
                 setStatus("已清空刪除區塊。", "ok");
@@ -654,6 +752,9 @@
 
                 const index = Number(button.getAttribute("data-remove-index"));
                 if (!Number.isInteger(index) || index < 0 || index >= deleteRanges.length) {
+                    return;
+                }
+                if (rangesFrozen) {
                     return;
                 }
 
@@ -683,6 +784,8 @@
             updatePlayButton();
             updatePreviewPosition();
             updatePreviewPlayButton();
+            setRangesFrozen(false);
+            applyAutoTargetName();
         }
 
         bootstrap();

@@ -37,6 +37,15 @@ Before you begin, you need to have the following software installed on your syst
       sudo apt update && sudo apt install ffmpeg
       ```
 
+4.  **(Optional) YouTube cookies file for restricted videos**
+    - If some public-looking videos fail with `This video is not available`, provide a Netscape-format cookie file.
+    - Default file name in project root: `www.youtube.com_cookies.txt`
+    - Or set env var explicitly:
+      ```sh
+      export YTDLP_COOKIES_FILE=/absolute/path/to/cookies.txt
+      ```
+    - The server will pass this file to `yt-dlp --cookies` automatically (no keychain access needed).
+
 ## Setup
 
 1.  **Download the project files.** You can do this by cloning the repository or downloading the files as a ZIP.

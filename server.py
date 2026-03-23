@@ -15,7 +15,9 @@ from typing import Any
 
 PORT = 8000
 DOWNLOADS_DIR = "downloads"
-MAX_CONCURRENT_JOBS = 3
+DEFAULT_CONCURRENT_JOBS = 1
+MAX_WORKER_THREADS = 3
+DEFAULT_COOKIES_FILE = "www.youtube.com_cookies.txt"
 
 PREVIEW_DIR_NAME = ".tmp-edits"
 PREVIEW_TTL_SECONDS = 2 * 60 * 60
@@ -258,11 +260,22 @@ class JobManager:
         self,
         downloads_dir: str = DOWNLOADS_DIR,
         yt_dlp_path: str = "./yt-dlp",
-        max_workers: int = MAX_CONCURRENT_JOBS,
+        max_workers: int = MAX_WORKER_THREADS,
+        concurrency_limit: int | None = None,
+        cookies_file: str | None = None,
     ):
         self.downloads_dir = downloads_dir
         self.yt_dlp_path = yt_dlp_path
         self.max_workers = max(0, int(max_workers))
+        self.cookies_file = cookies_file
+        if self.max_workers <= 0:
+            self._concurrency_limit = 0
+        else:
+            requested_limit = (
+                DEFAULT_CONCURRENT_JOBS if concurrency_limit is None else int(concurrency_limit)
+            )
+            self._concurrency_limit = max(1, min(requested_limit, self.max_workers))
+        self._active_jobs = 0
 
         self._lock = threading.Lock()
         self._queue: queue.Queue[str | None] = queue.Queue()
@@ -270,6 +283,7 @@ class JobManager:
         self._jobs: dict[str, dict[str, Any]] = {}
         self._job_order: list[str] = []
         self._workers: list[threading.Thread] = []
+        self._slot_condition = threading.Condition()
 
         os.makedirs(self.downloads_dir, exist_ok=True)
 
@@ -284,10 +298,33 @@ class JobManager:
 
     def shutdown(self) -> None:
         self._shutdown_event.set()
+        with self._slot_condition:
+            self._slot_condition.notify_all()
         for _ in self._workers:
             self._queue.put(None)
         for worker in self._workers:
             worker.join(timeout=2)
+
+    def get_concurrency_settings(self) -> dict[str, int]:
+        with self._slot_condition:
+            return {
+                "max_concurrent_jobs": self._concurrency_limit,
+                "max_allowed": self.max_workers,
+            }
+
+    def set_concurrency_limit(self, limit: int) -> dict[str, int]:
+        if self.max_workers <= 0:
+            raise ValueError("目前不支援背景工作執行緒")
+
+        value = int(limit)
+        if value < 1 or value > self.max_workers:
+            raise ValueError(f"max_concurrent_jobs 必須介於 1 到 {self.max_workers}")
+
+        with self._slot_condition:
+            self._concurrency_limit = value
+            self._slot_condition.notify_all()
+
+        return self.get_concurrency_settings()
 
     def create_jobs(self, urls: list[str]) -> list[dict[str, Any]]:
         valid_urls = [url for url in normalize_urls(urls) if is_valid_url(url)]
@@ -330,20 +367,42 @@ class JobManager:
 
     def retry_job(self, job_id: str) -> dict[str, Any]:
         with self._lock:
-            original = self._jobs.get(job_id)
-            if not original:
+            job = self._jobs.get(job_id)
+            if not job:
                 raise KeyError(job_id)
-            if original.get("status") != "failed":
+            if job.get("status") != "failed":
                 raise ValueError("Only failed jobs can be retried")
 
-            job = self._new_job(original["url"])
-            self._jobs[job["id"]] = job
-            self._job_order.append(job["id"])
+            job.update(
+                status="queued",
+                progress=0,
+                speed=None,
+                eta=None,
+                file_name=None,
+                error=None,
+            )
+            retried_id = str(job["id"])
 
         if self.max_workers > 0:
-            self._queue.put(job["id"])
+            self._queue.put(retried_id)
 
-        return dict(job)
+        return self.get_job(retried_id) or {}
+
+    def delete_job(self, job_id: str) -> dict[str, Any]:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                raise KeyError(job_id)
+
+            status = str(job.get("status", ""))
+            if status in {"downloading", "postprocessing"}:
+                raise ValueError("下載中的任務不可刪除")
+
+            removed = dict(job)
+            del self._jobs[job_id]
+            self._job_order = [item for item in self._job_order if item != job_id]
+
+        return removed
 
     def _new_job(self, url: str) -> dict[str, Any]:
         return {
@@ -366,9 +425,25 @@ class JobManager:
                 break
 
             try:
+                self._acquire_download_slot()
                 self._run_job(job_id)
             finally:
+                self._release_download_slot()
                 self._queue.task_done()
+
+    def _acquire_download_slot(self) -> None:
+        with self._slot_condition:
+            while (
+                not self._shutdown_event.is_set()
+                and self._active_jobs >= self._concurrency_limit
+            ):
+                self._slot_condition.wait(timeout=0.2)
+            self._active_jobs += 1
+
+    def _release_download_slot(self) -> None:
+        with self._slot_condition:
+            self._active_jobs = max(0, self._active_jobs - 1)
+            self._slot_condition.notify_all()
 
     def _run_job(self, job_id: str) -> None:
         job = self.get_job(job_id)
@@ -394,6 +469,8 @@ class JobManager:
             os.path.join(self.downloads_dir, "%(title)s.%(ext)s"),
             job["url"],
         ]
+        if self.cookies_file:
+            command[1:1] = ["--cookies", self.cookies_file]
 
         last_line = ""
 
@@ -632,16 +709,13 @@ class EditManager:
             if output_format != source_ext:
                 raise ValueError("覆蓋模式必須與原始格式一致")
 
-            backup_name = f"{source_file}.bak.{timestamp_slug()}"
-            backup_path = os.path.join(self.downloads_dir, backup_name)
-            shutil.copy2(source_path, backup_path)
             os.replace(preview_path, source_path)
             self._remove_preview_record(preview_id)
 
             return {
                 "file_name": source_file,
                 "file_url": f"/downloads/{urllib.parse.quote(source_file)}",
-                "backup_file": backup_name,
+                "backup_file": None,
             }
 
         final_name: str
@@ -745,6 +819,10 @@ def create_request_handler(job_manager: JobManager, edit_manager: EditManager | 
                 self._send_json(job_manager.list_jobs(ids=ids))
                 return
 
+            if parsed.path == "/settings":
+                self._send_json(job_manager.get_concurrency_settings())
+                return
+
             preview_match = re.match(r"^/edits/previews/(?P<preview_id>[^/]+)$", parsed.path)
             if preview_match:
                 preview_id = preview_match.group("preview_id")
@@ -796,6 +874,19 @@ def create_request_handler(job_manager: JobManager, edit_manager: EditManager | 
                     return
 
                 self._send_json(created_jobs[0], status_code=202)
+                return
+
+            if parsed.path == "/settings":
+                value = data.get("max_concurrent_jobs") if isinstance(data, dict) else None
+                if not isinstance(value, int):
+                    self._send_json({"error": "max_concurrent_jobs 必須是整數"}, status_code=400)
+                    return
+                try:
+                    updated = job_manager.set_concurrency_limit(value)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status_code=400)
+                    return
+                self._send_json(updated, status_code=200)
                 return
 
             if parsed.path == "/edits/preview":
@@ -895,6 +986,22 @@ def create_request_handler(job_manager: JobManager, edit_manager: EditManager | 
 
         def do_DELETE(self):
             parsed = urllib.parse.urlparse(self.path)
+
+            job_match = re.match(r"^/jobs/(?P<job_id>[^/]+)$", parsed.path)
+            if job_match:
+                job_id = job_match.group("job_id")
+                try:
+                    deleted = job_manager.delete_job(job_id)
+                except KeyError:
+                    self._send_json({"error": "找不到任務"}, status_code=404)
+                    return
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status_code=409)
+                    return
+
+                self._send_json({"deleted": True, "job": deleted}, status_code=200)
+                return
+
             preview_match = re.match(r"^/edits/previews/(?P<preview_id>[^/]+)$", parsed.path)
             if preview_match:
                 preview_id = preview_match.group("preview_id")
@@ -919,11 +1026,18 @@ class ThreadingHTTPServer(socketserver.ThreadingTCPServer):
 def run_server(port: int = PORT) -> None:
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+    cookies_file = os.getenv("YTDLP_COOKIES_FILE")
+    if not cookies_file:
+        default_cookie_path = os.path.join(os.getcwd(), DEFAULT_COOKIES_FILE)
+        if os.path.isfile(default_cookie_path):
+            cookies_file = default_cookie_path
 
     job_manager = JobManager(
         downloads_dir=DOWNLOADS_DIR,
         yt_dlp_path="./yt-dlp",
-        max_workers=MAX_CONCURRENT_JOBS,
+        max_workers=MAX_WORKER_THREADS,
+        concurrency_limit=DEFAULT_CONCURRENT_JOBS,
+        cookies_file=cookies_file,
     )
     edit_manager = EditManager(downloads_dir=DOWNLOADS_DIR)
     handler = create_request_handler(job_manager, edit_manager)

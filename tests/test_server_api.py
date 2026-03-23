@@ -62,12 +62,11 @@ class FakeEditManager:
             source_ext = os.path.splitext(preview["source_file"])[1].lstrip(".").lower()
             if source_ext != preview["output_format"]:
                 raise ValueError("覆蓋模式必須與原始格式一致")
-            backup_name = f"{preview['source_file']}.bak.test"
             self.delete_preview(preview_id)
             return {
                 "file_name": preview["source_file"],
                 "file_url": f"/downloads/{preview['source_file']}",
-                "backup_file": backup_name,
+                "backup_file": None,
             }
 
         target_file = target_name or f"edited.{preview['output_format']}"
@@ -146,7 +145,7 @@ class ApiTests(unittest.TestCase):
         self.assertGreaterEqual(len(jobs), 1)
         self.assertEqual(jobs[-1]["url"], "https://youtube.com/watch?v=abc")
 
-    def test_retry_endpoint_creates_new_job(self):
+    def test_retry_endpoint_reuses_same_job(self):
         create_status, payload = self.request_json(
             "POST",
             "/jobs",
@@ -156,13 +155,69 @@ class ApiTests(unittest.TestCase):
 
         original_job = payload["jobs"][0]
         self.manager.update_job(original_job["id"], status="failed", error="test failure")
+        before_count = len(self.manager.list_jobs())
 
         retry_status, retried = self.request_json("POST", f"/jobs/{original_job['id']}/retry")
+        after_count = len(self.manager.list_jobs())
 
         self.assertEqual(retry_status, 201)
         self.assertEqual(retried["url"], original_job["url"])
-        self.assertNotEqual(retried["id"], original_job["id"])
+        self.assertEqual(retried["id"], original_job["id"])
         self.assertEqual(retried["status"], "queued")
+        self.assertEqual(retried["progress"], 0)
+        self.assertEqual(before_count, after_count)
+
+    def test_delete_job_endpoint(self):
+        create_status, payload = self.request_json(
+            "POST",
+            "/jobs",
+            {"urls": ["https://youtu.be/remove-me"]},
+        )
+        self.assertEqual(create_status, 201)
+        job_id = payload["jobs"][0]["id"]
+
+        delete_status, deleted = self.request_json("DELETE", f"/jobs/{job_id}")
+        self.assertEqual(delete_status, 200)
+        self.assertTrue(deleted["deleted"])
+
+        get_status, jobs = self.request_json("GET", "/jobs")
+        self.assertEqual(get_status, 200)
+        self.assertTrue(all(job["id"] != job_id for job in jobs))
+
+    def test_delete_downloading_job_returns_409(self):
+        create_status, payload = self.request_json(
+            "POST",
+            "/jobs",
+            {"urls": ["https://youtu.be/running-job"]},
+        )
+        self.assertEqual(create_status, 201)
+        job_id = payload["jobs"][0]["id"]
+        self.manager.update_job(job_id, status="downloading")
+
+        delete_status, error_payload = self.request_json("DELETE", f"/jobs/{job_id}")
+        self.assertEqual(delete_status, 409)
+        self.assertIn("不可刪除", error_payload["error"])
+
+    def test_settings_endpoint_updates_concurrency_limit(self):
+        get_status, settings = self.request_json("GET", "/settings")
+        self.assertEqual(get_status, 200)
+        self.assertIn("max_concurrent_jobs", settings)
+        self.assertIn("max_allowed", settings)
+
+        update_status, updated = self.request_json("POST", "/settings", {"max_concurrent_jobs": 1})
+        self.assertEqual(update_status, 400)
+        self.assertIn("不支援", updated["error"])
+
+        invalid_status, invalid_payload = self.request_json(
+            "POST",
+            "/settings",
+            {"max_concurrent_jobs": 999},
+        )
+        self.assertEqual(invalid_status, 400)
+        self.assertTrue(
+            ("max_concurrent_jobs" in invalid_payload["error"])
+            or ("背景工作執行緒" in invalid_payload["error"])
+        )
 
     def test_preview_commit_and_delete_endpoints(self):
         status, preview = self.request_json(

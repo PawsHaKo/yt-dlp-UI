@@ -78,16 +78,50 @@ class JobManagerTests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["id"], selected_id)
 
-    def test_retry_creates_new_job_for_failed_job(self):
+    def test_retry_reuses_same_job_for_failed_job(self):
         created = self.manager.create_jobs(["https://youtube.com/watch?v=abc"])
         job_id = created[0]["id"]
         self.manager.update_job(job_id, status="failed", error="network error")
+        before_count = len(self.manager.list_jobs())
 
         retried = self.manager.retry_job(job_id)
+        after_count = len(self.manager.list_jobs())
 
-        self.assertNotEqual(retried["id"], job_id)
+        self.assertEqual(retried["id"], job_id)
         self.assertEqual(retried["url"], created[0]["url"])
         self.assertEqual(retried["status"], "queued")
+        self.assertEqual(retried["progress"], 0)
+        self.assertIsNone(retried["error"])
+        self.assertEqual(before_count, after_count)
+
+    def test_delete_job_removes_non_running_job(self):
+        created = self.manager.create_jobs(["https://youtube.com/watch?v=abc"])
+        job_id = created[0]["id"]
+
+        removed = self.manager.delete_job(job_id)
+
+        self.assertEqual(removed["id"], job_id)
+        self.assertIsNone(self.manager.get_job(job_id))
+
+    def test_delete_job_rejects_downloading_job(self):
+        created = self.manager.create_jobs(["https://youtube.com/watch?v=abc"])
+        job_id = created[0]["id"]
+        self.manager.update_job(job_id, status="downloading")
+
+        with self.assertRaises(ValueError):
+            self.manager.delete_job(job_id)
+
+    def test_set_concurrency_limit_updates_value(self):
+        manager = server.JobManager(max_workers=3, concurrency_limit=1)
+        self.addCleanup(manager.shutdown)
+
+        before = manager.get_concurrency_settings()
+        self.assertEqual(before["max_concurrent_jobs"], 1)
+        self.assertEqual(before["max_allowed"], 3)
+
+        updated = manager.set_concurrency_limit(2)
+        self.assertEqual(updated["max_concurrent_jobs"], 2)
+        self.assertEqual(updated["max_allowed"], 3)
 
 
 class EditHelpersTests(unittest.TestCase):
