@@ -1,14 +1,14 @@
 # yt-dlp Web UI
 
-A simple, self-hosted web interface for downloading audio from YouTube using `yt-dlp`.
+A self-hosted web interface for downloading YouTube audio as MP3 by using `yt-dlp`.
 
 ## Features
 
-- **Simple Web Interface:** Clean and easy-to-use UI for downloading audio.
-- **Bulk Downloads:** Paste multiple YouTube URLs to download them in a batch.
-- **MP3 Conversion:** Automatically converts and saves audio in MP3 format.
-- **Download Progress:** Real-time progress bars show the status of each download.
-- **File Listing:** Displays a list of all downloaded audio files.
+- **Queue-first workflow:** Submit multiple URLs in one shot, then monitor a live job queue.
+- **Parallel workers:** Up to 3 downloads run at the same time, while the rest stay queued.
+- **Real progress updates:** UI shows actual `yt-dlp` status (`queued / downloading / postprocessing / completed / failed`).
+- **Retry failed jobs:** Failed entries can be retried without pasting URLs again.
+- **Downloaded file list:** Completed files are listed and can be opened directly.
 
 ## Prerequisites
 
@@ -64,7 +64,26 @@ Before you begin, you need to have the following software installed on your syst
 
 ## How to Use
 
-- **Single or Bulk URLs:** Paste one or more YouTube URLs into the text area. You can separate them with new lines, spaces, or commas.
-- **Start Processing:** Click the "Start Processing" button.
-- **Monitor Progress:** The download progress for each URL will appear below the input form.
-- **Access Files:** Successfully downloaded files will be listed at the bottom of the page and stored in the `downloads` directory.
+- Paste one or more YouTube URLs into the input area (newlines, spaces, and commas are supported).
+- Click **加入佇列** to create jobs.
+- Watch the queue for each job status:
+  - `排隊中` (`queued`)
+  - `下載中` (`downloading`)
+  - `後處理中` (`postprocessing`)
+  - `完成` (`completed`)
+  - `失敗` (`failed`)
+- Click **重試** on failed jobs.
+- Completed audio files are shown in **已下載檔案** and stored in the `downloads/` directory.
+
+## API Endpoints
+
+- `POST /jobs`
+  - Body: `{ "urls": ["https://...", "..."] }`
+  - Behavior: trims and deduplicates URLs, validates `http/https`, then creates queued jobs.
+- `GET /jobs`
+  - Returns all jobs in creation order.
+  - Optional query: `?ids=<id1>,<id2>`.
+- `POST /jobs/{id}/retry`
+  - Retries only failed jobs by creating a new queued job with the same URL.
+- `GET /files`
+  - Returns downloaded file names from `downloads/`.

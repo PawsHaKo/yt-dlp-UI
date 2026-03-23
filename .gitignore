@@ -1,1 +1,6 @@
 yt-dlp
+.spectra/
+openspec/.vector-search.db*
+.agents
+.DS_Store
+__pycache__/

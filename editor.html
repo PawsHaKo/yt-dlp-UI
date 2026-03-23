@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>音訊剪輯器</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #eef3f4;
+            --panel: #ffffff;
+            --text: #1f2a2f;
+            --muted: #5e747d;
+            --border: #d7e2e6;
+            --primary: #0e7c86;
+            --primary-soft: #dff3f5;
+            --danger: #b23a32;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "Noto Sans TC", "PingFang TC", sans-serif;
+            background: linear-gradient(180deg, #f7fbfc 0%, var(--bg) 100%);
+            color: var(--text);
+        }
+
+        .wrap {
+            max-width: 980px;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-bottom: 1rem;
+            overflow: hidden;
+        }
+
+        .panel-head {
+            padding: 0.9rem 1rem;
+            border-bottom: 1px solid var(--border);
+            background: #f7fbfc;
+        }
+
+        .panel-body {
+            padding: 1rem;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.4rem;
+        }
+
+        .muted {
+            color: var(--muted);
+            margin-top: 0.4rem;
+        }
+
+        #waveform {
+            width: 100%;
+            min-height: 170px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fff;
+        }
+        #previewWaveform {
+            width: 100%;
+            min-height: 140px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fff;
+            margin-top: 0.6rem;
+        }
+
+        .wave-wrap {
+            position: relative;
+        }
+
+        .range-overlay {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        .range-marker {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            background: rgba(178, 58, 50, 0.28);
+            border-left: 1px solid rgba(178, 58, 50, 0.7);
+            border-right: 1px solid rgba(178, 58, 50, 0.7);
+        }
+
+        .grid {
+            display: grid;
+            gap: 0.7rem;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            margin-top: 0.8rem;
+        }
+
+        label {
+            font-size: 0.92rem;
+            color: var(--muted);
+            display: block;
+            margin-bottom: 0.28rem;
+        }
+
+        input,
+        select,
+        button {
+            font: inherit;
+        }
+
+        input[type="number"],
+        input[type="text"],
+        select {
+            width: 100%;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.45rem 0.55rem;
+        }
+
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+            margin-top: 0.7rem;
+        }
+
+        button {
+            border: 0;
+            border-radius: 8px;
+            padding: 0.5rem 0.75rem;
+            cursor: pointer;
+            background: #e4ecef;
+            color: var(--text);
+        }
+
+        button.primary {
+            background: var(--primary);
+            color: #fff;
+        }
+        button.playing {
+            background: #0b6f42;
+            color: #fff;
+        }
+
+        button.warn {
+            background: #fce7e5;
+            color: var(--danger);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        #ranges {
+            margin: 0.5rem 0 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        #ranges li {
+            border: 1px solid var(--border);
+            background: #fff;
+            border-radius: 8px;
+            padding: 0.45rem 0.6rem;
+            margin-bottom: 0.4rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+        }
+
+        audio {
+            width: 100%;
+            margin-top: 0.6rem;
+        }
+
+        .status {
+            margin-top: 0.5rem;
+            color: var(--muted);
+            min-height: 1.3rem;
+        }
+
+        .ok {
+            color: #0b6f42;
+        }
+
+        .error {
+            color: var(--danger);
+        }
+    </style>
+</head>
+<body>
+    <main class="wrap">
+        <section class="panel">
+            <div class="panel-head">
+                <h1>音訊剪輯器</h1>
+                <p class="muted"><a href="/">回到首頁</a> · 檔案：<strong id="fileName"></strong></p>
+            </div>
+            <div class="panel-body">
+                <div class="wave-wrap">
+                    <div id="waveform"></div>
+                    <div id="rangeOverlay" class="range-overlay"></div>
+                </div>
+                <div class="row">
+                    <button id="playBtn">播放 / 暫停</button>
+                    <button id="rewindBtn">-10 秒</button>
+                    <button id="forwardBtn">+10 秒</button>
+                    <label style="margin:0;">縮放
+                        <input id="zoomRange" type="range" min="0" max="200" value="0" />
+                    </label>
+                    <span id="positionText" class="muted">0.00s / 0.00s</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">刪除區塊與音量</div>
+            <div class="panel-body">
+                <div class="grid">
+                    <div>
+                        <label for="startSec">開始秒數</label>
+                        <input id="startSec" type="number" min="0" step="0.01" />
+                    </div>
+                    <div>
+                        <label for="endSec">結束秒數</label>
+                        <input id="endSec" type="number" min="0" step="0.01" />
+                    </div>
+                    <div>
+                        <label for="gainDb">音量（dB）</label>
+                        <input id="gainDb" type="range" min="-20" max="20" value="0" step="0.5" />
+                        <div id="gainText" class="muted">0 dB</div>
+                    </div>
+                </div>
+                <div class="row">
+                    <button id="setStartBtn">開始 = 目前播放點</button>
+                    <button id="setEndBtn">結束 = 目前播放點</button>
+                    <button id="addRangeBtn" class="primary">新增刪除區塊</button>
+                    <button id="clearRangesBtn" class="warn">清空全部</button>
+                </div>
+                <ul id="ranges"></ul>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">預覽與提交</div>
+            <div class="panel-body">
+                <div class="grid">
+                    <div>
+                        <label for="outputFormat">輸出格式</label>
+                        <select id="outputFormat">
+                            <option value="mp3">MP3</option>
+                            <option value="m4a">M4A</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="targetName">另存檔名（可空白）</label>
+                        <input id="targetName" type="text" placeholder="例如 my-edit.mp3" />
+                    </div>
+                </div>
+
+                <div class="row">
+                    <button id="refreshPreviewBtn" class="primary">提交修改並產生預覽</button>
+                    <button id="discardPreviewBtn" class="warn">刪除預覽</button>
+                </div>
+                <div id="previewWaveform"></div>
+                <div class="row">
+                    <button id="previewPlayBtn">播放預覽 / 暫停</button>
+                    <span id="previewPositionText" class="muted">0.00s / 0.00s</span>
+                </div>
+                <audio id="previewAudio" controls></audio>
+
+                <div class="row">
+                    <button id="overwriteBtn" class="primary">確認並覆蓋</button>
+                    <button id="saveAsBtn" class="primary">另存新檔</button>
+                </div>
+
+                <p id="status" class="status"></p>
+            </div>
+        </section>
+    </main>
+
+    <script src="https://unpkg.com/wavesurfer.js@7"></script>
+    <script>
+        const query = new URLSearchParams(window.location.search);
+        const sourceFile = query.get("file") || "";
+
+        const fileNameEl = document.getElementById("fileName");
+        const positionTextEl = document.getElementById("positionText");
+        const startSecEl = document.getElementById("startSec");
+        const endSecEl = document.getElementById("endSec");
+        const gainDbEl = document.getElementById("gainDb");
+        const gainTextEl = document.getElementById("gainText");
+        const rangesEl = document.getElementById("ranges");
+        const rangeOverlayEl = document.getElementById("rangeOverlay");
+        const outputFormatEl = document.getElementById("outputFormat");
+        const targetNameEl = document.getElementById("targetName");
+        const previewAudioEl = document.getElementById("previewAudio");
+        const previewPositionTextEl = document.getElementById("previewPositionText");
+        const statusEl = document.getElementById("status");
+
+        const playBtnEl = document.getElementById("playBtn");
+        const rewindBtnEl = document.getElementById("rewindBtn");
+        const forwardBtnEl = document.getElementById("forwardBtn");
+        const zoomRangeEl = document.getElementById("zoomRange");
+        const setStartBtnEl = document.getElementById("setStartBtn");
+        const setEndBtnEl = document.getElementById("setEndBtn");
+        const addRangeBtnEl = document.getElementById("addRangeBtn");
+        const clearRangesBtnEl = document.getElementById("clearRangesBtn");
+        const refreshPreviewBtnEl = document.getElementById("refreshPreviewBtn");
+        const discardPreviewBtnEl = document.getElementById("discardPreviewBtn");
+        const previewPlayBtnEl = document.getElementById("previewPlayBtn");
+        const saveAsBtnEl = document.getElementById("saveAsBtn");
+        const overwriteBtnEl = document.getElementById("overwriteBtn");
+
+        let wavesurfer = null;
+        let previewWavesurfer = null;
+        let duration = 0;
+        let previewDuration = 0;
+        let previewId = null;
+        const deleteRanges = [];
+
+        function setStatus(message, type = "") {
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`.trim();
+        }
+
+        function formatSec(value) {
+            if (!Number.isFinite(value) || value < 0) {
+                return "0.00";
+            }
+            return value.toFixed(2);
+        }
+
+        function updateSourcePosition() {
+            const current = wavesurfer ? wavesurfer.getCurrentTime() : 0;
+            positionTextEl.textContent = `${formatSec(current)}s / ${formatSec(duration)}s`;
+        }
+
+        function updatePlayButton() {
+            const isPlaying = Boolean(wavesurfer && wavesurfer.isPlaying());
+            playBtnEl.classList.toggle("playing", isPlaying);
+            playBtnEl.textContent = isPlaying ? "暫停播放" : "開始播放";
+        }
+
+        function updatePreviewPosition() {
+            const current = previewWavesurfer ? previewWavesurfer.getCurrentTime() : 0;
+            previewPositionTextEl.textContent = `${formatSec(current)}s / ${formatSec(previewDuration)}s`;
+        }
+
+        function updatePreviewPlayButton() {
+            const isPlaying = Boolean(previewWavesurfer && previewWavesurfer.isPlaying());
+            previewPlayBtnEl.classList.toggle("playing", isPlaying);
+            previewPlayBtnEl.textContent = isPlaying ? "暫停預覽" : "播放預覽";
+        }
+
+        function renderRangeMarkers() {
+            if (!duration || !deleteRanges.length) {
+                rangeOverlayEl.innerHTML = "";
+                return;
+            }
+
+            rangeOverlayEl.innerHTML = deleteRanges
+                .map((range) => {
+                    const left = Math.max(0, Math.min(100, (range.start_sec / duration) * 100));
+                    const width = Math.max(0.5, ((range.end_sec - range.start_sec) / duration) * 100);
+                    return `<div class="range-marker" style="left:${left}%;width:${width}%"></div>`;
+                })
+                .join("");
+        }
+
+        function resetPreviewWaveform() {
+            if (previewWavesurfer) {
+                previewWavesurfer.destroy();
+                previewWavesurfer = null;
+            }
+            previewDuration = 0;
+            updatePreviewPosition();
+            updatePreviewPlayButton();
+        }
+
+        function mountPreviewWaveform(url) {
+            resetPreviewWaveform();
+            previewWavesurfer = WaveSurfer.create({
+                container: "#previewWaveform",
+                height: 140,
+                waveColor: "#9fc8cf",
+                progressColor: "#0e7c86",
+                cursorColor: "#1f2a2f",
+                url,
+            });
+            previewWavesurfer.on("ready", () => {
+                previewDuration = previewWavesurfer.getDuration();
+                updatePreviewPosition();
+            });
+            previewWavesurfer.on("audioprocess", updatePreviewPosition);
+            previewWavesurfer.on("seek", updatePreviewPosition);
+            previewWavesurfer.on("play", updatePreviewPlayButton);
+            previewWavesurfer.on("pause", updatePreviewPlayButton);
+        }
+
+        function updateGainText() {
+            gainTextEl.textContent = `${Number(gainDbEl.value).toFixed(1)} dB`;
+        }
+
+        function renderRanges() {
+            if (!deleteRanges.length) {
+                rangesEl.innerHTML = "<li>目前沒有刪除區塊。</li>";
+                return;
+            }
+
+            rangesEl.innerHTML = deleteRanges
+                .map((range, index) => {
+                    return `
+                        <li>
+                            <span>#${index + 1} 刪除 ${range.start_sec.toFixed(2)}s - ${range.end_sec.toFixed(2)}s</span>
+                            <button data-remove-index="${index}" class="warn">移除</button>
+                        </li>
+                    `;
+                })
+                .join("");
+            renderRangeMarkers();
+        }
+
+        function normalizeRange(start, end) {
+            if (!Number.isFinite(start) || !Number.isFinite(end)) {
+                return null;
+            }
+            if (duration <= 0) {
+                return null;
+            }
+            const s = Math.max(0, Math.min(start, duration));
+            const e = Math.max(0, Math.min(end, duration));
+            if (e <= s) {
+                return null;
+            }
+            return { start_sec: s, end_sec: e };
+        }
+
+        async function deletePreview() {
+            if (!previewId) {
+                return;
+            }
+
+            const id = previewId;
+            previewId = null;
+            previewAudioEl.removeAttribute("src");
+            previewAudioEl.load();
+            resetPreviewWaveform();
+
+            try {
+                await fetch(`/edits/previews/${encodeURIComponent(id)}`, { method: "DELETE", keepalive: true });
+            } catch (error) {
+                // Ignore network errors during background cleanup.
+            }
+        }
+
+        async function refreshPreview() {
+            if (!sourceFile) {
+                return;
+            }
+
+            await deletePreview();
+            setStatus("正在產生預覽...");
+            refreshPreviewBtnEl.disabled = true;
+
+            try {
+                const response = await fetch("/edits/preview", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        source_file: sourceFile,
+                        delete_ranges: deleteRanges,
+                        gain_db: Number(gainDbEl.value),
+                        output_format: outputFormatEl.value,
+                    }),
+                });
+
+                const payload = await response.json();
+                if (!response.ok) {
+                    setStatus(payload.error || "預覽建立失敗", "error");
+                    return;
+                }
+
+                previewId = payload.preview_id;
+                previewAudioEl.src = `${payload.preview_url}?t=${Date.now()}`;
+                mountPreviewWaveform(previewAudioEl.src);
+                setStatus("預覽已更新，可直接播放確認。", "ok");
+            } catch (error) {
+                setStatus("預覽建立失敗，請稍後重試。", "error");
+            } finally {
+                refreshPreviewBtnEl.disabled = false;
+            }
+        }
+
+        async function commit(mode) {
+            if (!previewId) {
+                setStatus("請先更新預覽，再提交。", "error");
+                return;
+            }
+
+            const payload = {
+                preview_id: previewId,
+                mode,
+                target_name: mode === "save_as" ? targetNameEl.value.trim() || null : null,
+            };
+
+            setStatus("正在提交...");
+            saveAsBtnEl.disabled = true;
+            overwriteBtnEl.disabled = true;
+
+            try {
+                const response = await fetch("/edits/commit", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    setStatus(data.error || "提交失敗", "error");
+                    return;
+                }
+
+                previewId = null;
+                previewAudioEl.removeAttribute("src");
+                previewAudioEl.load();
+                resetPreviewWaveform();
+
+                const backupInfo = data.backup_file ? `，備份：${data.backup_file}` : "";
+                setStatus(`完成：${data.file_name}${backupInfo}`, "ok");
+            } catch (error) {
+                setStatus("提交失敗，請稍後重試。", "error");
+            } finally {
+                saveAsBtnEl.disabled = false;
+                overwriteBtnEl.disabled = false;
+            }
+        }
+
+        function bootstrap() {
+            if (!sourceFile) {
+                setStatus("缺少檔案參數，請從首頁檔案列表進入。", "error");
+                return;
+            }
+
+            fileNameEl.textContent = sourceFile;
+            updateGainText();
+            renderRanges();
+
+            wavesurfer = WaveSurfer.create({
+                container: "#waveform",
+                height: 170,
+                waveColor: "#7fbec8",
+                progressColor: "#0e7c86",
+                cursorColor: "#1f2a2f",
+                url: `/downloads/${encodeURIComponent(sourceFile)}`,
+            });
+
+            wavesurfer.on("ready", () => {
+                duration = wavesurfer.getDuration();
+                endSecEl.value = duration.toFixed(2);
+                updateSourcePosition();
+                renderRangeMarkers();
+            });
+            wavesurfer.on("audioprocess", updateSourcePosition);
+            wavesurfer.on("seek", updateSourcePosition);
+            wavesurfer.on("play", updatePlayButton);
+            wavesurfer.on("pause", updatePlayButton);
+
+            wavesurfer.on("error", () => {
+                setStatus("音訊載入失敗，請確認檔案是否存在。", "error");
+            });
+
+            playBtnEl.addEventListener("click", () => {
+                if (wavesurfer) {
+                    wavesurfer.playPause();
+                }
+            });
+            rewindBtnEl.addEventListener("click", () => {
+                if (!wavesurfer) {
+                    return;
+                }
+                const next = Math.max(0, wavesurfer.getCurrentTime() - 10);
+                wavesurfer.setTime(next);
+                updateSourcePosition();
+            });
+            forwardBtnEl.addEventListener("click", () => {
+                if (!wavesurfer) {
+                    return;
+                }
+                const next = Math.min(duration || wavesurfer.getDuration(), wavesurfer.getCurrentTime() + 10);
+                wavesurfer.setTime(next);
+                updateSourcePosition();
+            });
+
+            zoomRangeEl.addEventListener("input", () => {
+                if (wavesurfer) {
+                    wavesurfer.zoom(Number(zoomRangeEl.value));
+                }
+            });
+
+            gainDbEl.addEventListener("input", updateGainText);
+
+            setStartBtnEl.addEventListener("click", () => {
+                if (!wavesurfer) {
+                    return;
+                }
+                startSecEl.value = wavesurfer.getCurrentTime().toFixed(2);
+            });
+
+            setEndBtnEl.addEventListener("click", () => {
+                if (!wavesurfer) {
+                    return;
+                }
+                endSecEl.value = wavesurfer.getCurrentTime().toFixed(2);
+            });
+
+            addRangeBtnEl.addEventListener("click", () => {
+                const start = Number(startSecEl.value);
+                const end = Number(endSecEl.value);
+                const range = normalizeRange(start, end);
+                if (!range) {
+                    setStatus("刪除區塊無效，請檢查開始/結束秒數。", "error");
+                    return;
+                }
+                deleteRanges.push(range);
+                deleteRanges.sort((a, b) => a.start_sec - b.start_sec);
+                renderRanges();
+                setStatus("已新增刪除區塊。", "ok");
+            });
+
+            clearRangesBtnEl.addEventListener("click", () => {
+                deleteRanges.length = 0;
+                renderRanges();
+                setStatus("已清空刪除區塊。", "ok");
+            });
+
+            rangesEl.addEventListener("click", (event) => {
+                const button = event.target.closest("button[data-remove-index]");
+                if (!button) {
+                    return;
+                }
+
+                const index = Number(button.getAttribute("data-remove-index"));
+                if (!Number.isInteger(index) || index < 0 || index >= deleteRanges.length) {
+                    return;
+                }
+
+                deleteRanges.splice(index, 1);
+                renderRanges();
+                setStatus("已移除區塊。", "ok");
+            });
+
+            refreshPreviewBtnEl.addEventListener("click", refreshPreview);
+            discardPreviewBtnEl.addEventListener("click", async () => {
+                await deletePreview();
+                setStatus("預覽已刪除。", "ok");
+            });
+            previewPlayBtnEl.addEventListener("click", () => {
+                if (previewWavesurfer) {
+                    previewWavesurfer.playPause();
+                }
+            });
+            saveAsBtnEl.addEventListener("click", () => commit("save_as"));
+            overwriteBtnEl.addEventListener("click", () => commit("overwrite"));
+
+            window.addEventListener("beforeunload", () => {
+                deletePreview();
+            });
+
+            updateSourcePosition();
+            updatePlayButton();
+            updatePreviewPosition();
+            updatePreviewPlayButton();
+        }
+
+        bootstrap();
+    </script>
+</body>
+</html>

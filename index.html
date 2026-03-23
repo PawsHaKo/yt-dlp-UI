@@ -1,152 +1,646 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube 轉檔</title>
+    <title>YouTube 音訊下載工具</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        .progress-component {
-            border: 1px solid #dee2e6;
-            border-radius: .25rem;
-            padding: 1rem;
+        :root {
+            --bg-start: #eef4f7;
+            --bg-end: #dce8ec;
+            --panel-bg: #ffffff;
+            --ink: #102126;
+            --muted: #4f6770;
+            --line: #c5d5db;
+            --primary: #0b7285;
+            --primary-strong: #095c6b;
+            --success: #1f8a4c;
+            --danger: #b23a32;
+            --queued: #5c6f7a;
+            --postprocess: #8a5a12;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "IBM Plex Sans", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+            color: var(--ink);
+            background: radial-gradient(circle at 0% 0%, #f5fbff 0%, transparent 45%),
+                        linear-gradient(145deg, var(--bg-start) 0%, var(--bg-end) 100%);
+        }
+
+        .shell {
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 1.25rem;
+        }
+
+        .header {
             margin-bottom: 1rem;
         }
-        .progress-title {
-            white-space: nowrap;
+
+        .header h1 {
+            margin: 0;
+            font-size: 1.95rem;
+            letter-spacing: 0.01em;
+            font-weight: 700;
+        }
+
+        .header p {
+            margin: 0.35rem 0 0;
+            color: var(--muted);
+            font-size: 0.96rem;
+        }
+
+        .panel {
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: var(--panel-bg);
+            box-shadow: 0 9px 30px rgba(16, 33, 38, 0.08);
             overflow: hidden;
-            text-overflow: ellipsis;
+        }
+
+        .panel + .panel {
+            margin-top: 1rem;
+        }
+
+        .panel-head {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.9rem 1rem;
+            border-bottom: 1px solid var(--line);
+            background: linear-gradient(90deg, #f7fbfd 0%, #fefefe 100%);
+        }
+
+        .panel-title {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 700;
+        }
+
+        .panel-body {
+            padding: 1rem;
+        }
+
+        #youtubeUrls {
+            width: 100%;
+            border: 1px solid #acc2cc;
+            border-radius: 10px;
+            padding: 0.8rem;
+            font-size: 0.95rem;
+            line-height: 1.4;
+            min-height: 135px;
+            resize: vertical;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        #youtubeUrls:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 0.2rem rgba(11, 114, 133, 0.15);
+            outline: none;
+        }
+
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            margin-top: 0.85rem;
+        }
+
+        .btn-submit {
+            border: none;
+            border-radius: 9px;
+            background: var(--primary);
+            color: #fff;
+            font-weight: 600;
+            padding: 0.58rem 1rem;
+            transition: background 0.15s ease, transform 0.15s ease;
+        }
+
+        .btn-submit:hover {
+            background: var(--primary-strong);
+            transform: translateY(-1px);
+        }
+
+        .btn-submit:disabled {
+            opacity: 0.55;
+            transform: none;
+        }
+
+        .hint {
+            margin: 0;
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+
+        .summary {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            border-radius: 999px;
+            padding: 0.26rem 0.62rem;
+            font-size: 0.8rem;
+            font-weight: 600;
+            border: 1px solid transparent;
+            background: #edf3f6;
+            color: #2a454e;
+        }
+
+        .chip-queued {
+            background: #f0f4f6;
+            color: var(--queued);
+        }
+
+        .chip-downloading {
+            background: #e2f4f7;
+            color: #0b6c7f;
+        }
+
+        .chip-postprocessing {
+            background: #fff2dd;
+            color: var(--postprocess);
+        }
+
+        .chip-completed {
+            background: #e6f6ea;
+            color: var(--success);
+        }
+
+        .chip-failed {
+            background: #fbe8e6;
+            color: var(--danger);
+        }
+
+        #queueEmpty {
+            text-align: center;
+            color: var(--muted);
+            padding: 0.9rem;
+            border: 1px dashed var(--line);
+            border-radius: 10px;
+            background: #fbfeff;
+        }
+
+        #queueList {
+            display: grid;
+            gap: 0.85rem;
+        }
+
+        .job {
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 0.82rem;
+            background: #fff;
+        }
+
+        .job-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 0.75rem;
+            align-items: flex-start;
+        }
+
+        .job-title {
+            margin: 0;
+            font-size: 0.94rem;
+            font-weight: 700;
+            word-break: break-word;
+        }
+
+        .job-url {
+            margin: 0.25rem 0 0;
+            color: var(--muted);
+            font-size: 0.8rem;
+            word-break: break-all;
+        }
+
+        .status-badge {
+            white-space: nowrap;
+            border-radius: 999px;
+            padding: 0.22rem 0.56rem;
+            font-size: 0.78rem;
+            font-weight: 700;
+            border: 1px solid transparent;
+        }
+
+        .status-queued { background: #f0f4f6; color: var(--queued); }
+        .status-downloading { background: #def1f5; color: #0b6f82; }
+        .status-postprocessing { background: #fff0d8; color: var(--postprocess); }
+        .status-completed { background: #e3f4e8; color: var(--success); }
+        .status-failed { background: #fae6e4; color: var(--danger); }
+
+        .job-progress {
+            margin-top: 0.75rem;
+            height: 0.74rem;
+            background: #e8eef2;
+            border-radius: 999px;
+            overflow: hidden;
+        }
+
+        .job-progress > div {
+            height: 100%;
+            width: 0;
+            background: linear-gradient(90deg, #1898b1 0%, #0b7285 100%);
+            transition: width 0.28s ease;
+        }
+
+        .job-meta {
+            margin-top: 0.45rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+            font-size: 0.78rem;
+            color: #476069;
+        }
+
+        .job-error {
+            margin: 0.55rem 0 0;
+            color: var(--danger);
+            font-size: 0.83rem;
+            line-height: 1.35;
+        }
+
+        .job-actions {
+            margin-top: 0.6rem;
+            display: flex;
+            justify-content: flex-end;
+        }
+
+        .btn-retry {
+            border: 1px solid #bd6a62;
+            border-radius: 8px;
+            background: #fff;
+            color: #a43f36;
+            font-size: 0.8rem;
+            font-weight: 700;
+            padding: 0.26rem 0.64rem;
+        }
+
+        .btn-retry:hover {
+            background: #fff3f2;
+        }
+
+        #fileList {
+            margin: 0;
+            padding-left: 0;
+            list-style: none;
+            display: grid;
+            gap: 0.45rem;
+        }
+
+        #fileList li {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 0.55rem 0.7rem;
+            background: #fcfdfe;
+        }
+
+        #fileList a {
+            color: #0a5f7b;
+            font-size: 0.9rem;
+            text-decoration: none;
+            word-break: break-all;
+        }
+
+        #fileList a:hover {
+            text-decoration: underline;
+        }
+
+        @media (max-width: 768px) {
+            .shell {
+                padding: 0.85rem;
+            }
+
+            .header h1 {
+                font-size: 1.55rem;
+            }
+
+            .panel-head {
+                padding: 0.75rem 0.8rem;
+            }
+
+            .panel-body {
+                padding: 0.8rem;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="container mt-5">
-        <h1 class="mb-4">YouTube 轉檔</h1>
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">Bulk Download Audio from YouTube</h5>
+    <main class="shell">
+        <header class="header">
+            <h1>YouTube 音訊下載工具</h1>
+            <p>貼上多個網址後，系統會同時處理最多 3 筆任務，其餘自動排隊。</p>
+        </header>
+
+        <section class="panel">
+            <div class="panel-head">
+                <h2 class="panel-title">新增下載任務</h2>
+            </div>
+            <div class="panel-body">
                 <form id="downloadForm">
-                    <div class="mb-3">
-                        <label for="youtubeUrls" class="form-label">YouTube URLs (one per line)</label>
-                        <textarea class="form-control" id="youtubeUrls" rows="5" placeholder="Enter YouTube URLs, separated by newlines, commas, or spaces"></textarea>
+                    <textarea
+                        id="youtubeUrls"
+                        placeholder="貼上 YouTube 網址（可用換行、空白或逗號分隔）"
+                    ></textarea>
+                    <div class="toolbar">
+                        <p class="hint">送出前會自動去重並整理格式。</p>
+                        <button id="submitBtn" type="submit" class="btn-submit">加入佇列</button>
                     </div>
-                    <button type="submit" class="btn btn-primary">Start Processing</button>
                 </form>
             </div>
-        </div>
+        </section>
 
-        <div id="bulk-progress" class="mt-4">
-            <div class="text-center text-muted">Paste URLs and click 'Start Processing'.</div>
-        </div>
-        
-        <div class="mt-4">
-            <h2>Downloaded Files</h2>
-            <ul id="fileList" class="list-group">
-            </ul>
-        </div>
-    </div>
+        <section class="panel">
+            <div class="panel-head">
+                <h2 class="panel-title">任務佇列</h2>
+                <div id="queueSummary" class="summary"></div>
+            </div>
+            <div class="panel-body">
+                <div id="queueEmpty">目前沒有任務。先貼上網址並加入佇列。</div>
+                <div id="queueList"></div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <h2 class="panel-title">已下載檔案</h2>
+            </div>
+            <div class="panel-body">
+                <ul id="fileList"></ul>
+            </div>
+        </section>
+    </main>
 
     <script>
-        document.getElementById('downloadForm').addEventListener('submit', async function (event) {
+        const POLL_INTERVAL_MS = 1000;
+
+        const statusMap = {
+            queued: "排隊中",
+            downloading: "下載中",
+            postprocessing: "後處理中",
+            completed: "完成",
+            failed: "失敗",
+        };
+
+        const queueListEl = document.getElementById("queueList");
+        const queueEmptyEl = document.getElementById("queueEmpty");
+        const queueSummaryEl = document.getElementById("queueSummary");
+        const fileListEl = document.getElementById("fileList");
+        const urlsEl = document.getElementById("youtubeUrls");
+        const submitBtnEl = document.getElementById("submitBtn");
+        const formEl = document.getElementById("downloadForm");
+
+        formEl.addEventListener("submit", async (event) => {
             event.preventDefault();
-            const urlsText = document.getElementById('youtubeUrls').value;
-            const urls = urlsText.split(/[\s,]+/).map(url => url.trim()).filter(url => url.length > 0);
-            
-            document.getElementById('youtubeUrls').value = urls.join('\n');
 
-            const bulkProgress = document.getElementById('bulk-progress');
-            bulkProgress.innerHTML = ''; 
+            const normalized = normalizeInputUrls(urlsEl.value);
+            if (!normalized.length) {
+                alert("請至少輸入一個有效網址");
+                return;
+            }
 
-            for (let i = 0; i < urls.length; i++) {
-                await simulateProcessing(urls[i], i);
+            urlsEl.value = normalized.join("\n");
+            submitBtnEl.disabled = true;
+
+            try {
+                const response = await fetch("/jobs", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ urls: normalized }),
+                });
+
+                const payload = await response.json();
+
+                if (!response.ok) {
+                    alert(payload.error || "任務建立失敗");
+                    return;
+                }
+
+                const created = payload.jobs || [];
+                urlsEl.value = "";
+                setHint(`已新增 ${created.length} 筆任務。`);
+                await refreshJobs();
+            } catch (error) {
+                setHint("網路連線異常，請稍後再試。", true);
+            } finally {
+                submitBtnEl.disabled = false;
             }
         });
 
-        function simulateProcessing(url, index) {
-            return new Promise(resolve => {
-                const progressId = `progress-${index}`;
-                const titleId = `title-${index}`;
-                const progressWrapperId = `progress-wrapper-${index}`;
+        queueListEl.addEventListener("click", async (event) => {
+            const button = event.target.closest("button[data-retry-id]");
+            if (!button) {
+                return;
+            }
 
-                const progressHtml = `
-                    <div class="progress-component" id="${progressWrapperId}">
-                        <div class="progress-title fw-bold" id="${titleId}">${url}</div>
-                        <div class="d-flex align-items-center">
-                            <div class="progress flex-grow-1 me-2" style="height: 20px;">
-                                <div id="${progressId}" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-                document.getElementById('bulk-progress').innerHTML += progressHtml;
+            const jobId = button.getAttribute("data-retry-id");
+            button.disabled = true;
 
-                let progress = 0;
+            try {
+                const response = await fetch(`/jobs/${jobId}/retry`, { method: "POST" });
+                const payload = await response.json();
 
-                const interval = setInterval(() => {
-                    progress += Math.random() * 5 + 1;
-                    if (progress > 100) progress = 100;
+                if (!response.ok) {
+                    alert(payload.error || "重試失敗");
+                    button.disabled = false;
+                    return;
+                }
 
-                    const progressBar = document.getElementById(progressId);
-                    progressBar.style.width = `${progress}%`;
-                    progressBar.textContent = `${Math.round(progress)}%`;
-                    progressBar.setAttribute('aria-valuenow', progress);
+                setHint("已建立重試任務。");
+                await refreshJobs();
+            } catch (error) {
+                alert("重試時發生網路錯誤");
+                button.disabled = false;
+            }
+        });
 
-                    if (progress >= 100) {
-                        clearInterval(interval);
-                        progressBar.classList.add('progress-bar-striped', 'progress-bar-animated');
-                        progressBar.textContent = 'Finalizing...';
+        function normalizeInputUrls(input) {
+            const chunks = input
+                .split(/[\s,]+/)
+                .map((item) => item.trim())
+                .filter(Boolean);
 
-                        fetch('/download', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ url: url })
-                        })
-                        .then(response => response.json().then(data => ({ ok: response.ok, data })))
-                        .then(({ ok, data }) => {
-                            progressBar.classList.remove('progress-bar-striped', 'progress-bar-animated');
-                            if (ok) {
-                                progressBar.classList.add('bg-success');
-                                progressBar.textContent = 'Completed';
-                                document.getElementById(titleId).textContent = data.file_name;
-                                updateFileList();
-                            } else {
-                                progressBar.classList.add('bg-danger');
-                                progressBar.textContent = 'Error';
-                                document.getElementById(titleId).textContent = `Error: ${data.error}`;
-                            }
-                            resolve();
-                        })
-                        .catch(error => {
-                            progressBar.classList.remove('progress-bar-striped', 'progress-bar-animated');
-                            progressBar.classList.add('bg-danger');
-                            progressBar.textContent = 'Error';
-                            document.getElementById(titleId).textContent = 'An unexpected error occurred.';
-                            resolve();
-                        });
-                    }
-                }, 200);
-            });
+            const seen = new Set();
+            const result = [];
+
+            for (const url of chunks) {
+                if (seen.has(url)) {
+                    continue;
+                }
+                seen.add(url);
+                result.push(url);
+            }
+
+            return result;
         }
 
-        async function updateFileList() {
+        function escapeHtml(text) {
+            return text
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#39;");
+        }
+
+        function renderSummary(jobs) {
+            const counts = {
+                queued: 0,
+                downloading: 0,
+                postprocessing: 0,
+                completed: 0,
+                failed: 0,
+            };
+
+            for (const job of jobs) {
+                if (counts[job.status] !== undefined) {
+                    counts[job.status] += 1;
+                }
+            }
+
+            const total = jobs.length;
+            queueSummaryEl.innerHTML = `
+                <span class="chip">總數 ${total}</span>
+                <span class="chip chip-queued">排隊 ${counts.queued}</span>
+                <span class="chip chip-downloading">下載中 ${counts.downloading}</span>
+                <span class="chip chip-postprocessing">後處理 ${counts.postprocessing}</span>
+                <span class="chip chip-completed">完成 ${counts.completed}</span>
+                <span class="chip chip-failed">失敗 ${counts.failed}</span>
+            `;
+        }
+
+        function renderQueue(jobs) {
+            if (!jobs.length) {
+                queueEmptyEl.style.display = "block";
+                queueListEl.innerHTML = "";
+                renderSummary([]);
+                return;
+            }
+
+            queueEmptyEl.style.display = "none";
+            renderSummary(jobs);
+
+            queueListEl.innerHTML = jobs
+                .map((job) => {
+                    const title = escapeHtml(job.file_name || job.url || "未命名任務");
+                    const url = escapeHtml(job.url || "");
+                    const status = job.status || "queued";
+                    const statusLabel = statusMap[status] || status;
+                    const progress = Number.isFinite(job.progress) ? Math.max(0, Math.min(100, Math.round(job.progress))) : 0;
+                    const speedText = job.speed ? `速度 ${escapeHtml(job.speed)}` : "速度 -";
+                    const etaText = job.eta ? `剩餘 ${escapeHtml(job.eta)}` : "剩餘 -";
+                    const createdAt = job.created_at ? new Date(job.created_at).toLocaleString("zh-TW", { hour12: false }) : "";
+                    const errorHtml = job.error ? `<p class="job-error">${escapeHtml(job.error)}</p>` : "";
+                    const retryHtml = status === "failed"
+                        ? `<div class="job-actions"><button class="btn-retry" data-retry-id="${escapeHtml(job.id)}">重試</button></div>`
+                        : "";
+
+                    return `
+                        <article class="job">
+                            <div class="job-head">
+                                <div>
+                                    <p class="job-title">${title}</p>
+                                    <p class="job-url">${url}</p>
+                                </div>
+                                <span class="status-badge status-${status}">${statusLabel}</span>
+                            </div>
+                            <div class="job-progress">
+                                <div style="width: ${progress}%;"></div>
+                            </div>
+                            <div class="job-meta">
+                                <span>進度 ${progress}%</span>
+                                <span>${speedText}</span>
+                                <span>${etaText}</span>
+                                <span>${createdAt}</span>
+                            </div>
+                            ${errorHtml}
+                            ${retryHtml}
+                        </article>
+                    `;
+                })
+                .join("");
+        }
+
+        function renderFileList(files) {
+            if (!files.length) {
+                fileListEl.innerHTML = "<li>目前沒有已下載檔案。</li>";
+                return;
+            }
+
+            fileListEl.innerHTML = files
+                .map((file) => {
+                    const escaped = escapeHtml(file);
+                    const encoded = encodeURIComponent(file);
+                    return `
+                        <li>
+                            <a href="downloads/${encoded}" target="_blank">${escaped}</a>
+                            <a href="/editor?file=${encoded}" style="margin-left:10px;">編輯</a>
+                        </li>
+                    `;
+                })
+                .join("");
+        }
+
+        function setHint(message, isError = false) {
+            const hint = document.querySelector(".hint");
+            hint.textContent = message;
+            hint.style.color = isError ? "#b23a32" : "#4f6770";
+        }
+
+        async function refreshJobs() {
             try {
-                const response = await fetch('/files');
-                const files = await response.json();
-                const fileList = document.getElementById('fileList');
-                fileList.innerHTML = '';
-                files.forEach(file => {
-                    const li = document.createElement('li');
-                    li.className = 'list-group-item';
-                    li.innerHTML = `<a href="downloads/${file}" target="_blank">${file}</a>`;
-                    fileList.appendChild(li);
-                });
+                const response = await fetch("/jobs");
+                const jobs = await response.json();
+                if (!response.ok || !Array.isArray(jobs)) {
+                    return;
+                }
+
+                renderQueue([...jobs].reverse());
+                if (jobs.some((job) => job.status === "completed")) {
+                    await refreshFiles();
+                }
             } catch (error) {
-                console.error('Error fetching file list:', error);
+                setHint("任務狀態更新失敗，稍後會自動重試。", true);
             }
         }
 
-        // Initial file list load
-        updateFileList();
+        async function refreshFiles() {
+            try {
+                const response = await fetch("/files");
+                const files = await response.json();
+                if (!response.ok || !Array.isArray(files)) {
+                    return;
+                }
+                renderFileList(files);
+            } catch (error) {
+                setHint("檔案列表讀取失敗。", true);
+            }
+        }
+
+        async function bootstrap() {
+            await Promise.all([refreshJobs(), refreshFiles()]);
+            setInterval(() => {
+                refreshJobs();
+                refreshFiles();
+            }, POLL_INTERVAL_MS);
+        }
+
+        bootstrap();
     </script>
 </body>
 </html>
