@@ -87,6 +87,7 @@
             inset: 0;
             pointer-events: none;
             z-index: 5;
+            overflow: hidden;
         }
 
         .range-marker {
@@ -112,6 +113,46 @@
 
         .point-marker.end {
             background: #1769aa;
+        }
+
+        .marker-label {
+            position: absolute;
+            white-space: nowrap;
+            font-size: 0.65rem;
+            line-height: 1;
+            padding: 1px 4px;
+            color: #fff;
+            pointer-events: none;
+        }
+
+        .point-marker.start .marker-label {
+            top: 0;
+            left: 2px;
+            background: #1f8a4c;
+            border-radius: 0 3px 3px 0;
+        }
+
+        .point-marker.end .marker-label {
+            bottom: 0;
+            left: 2px;
+            background: #1769aa;
+            border-radius: 0 3px 3px 0;
+        }
+
+        .range-label {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 0.82rem;
+            font-weight: 700;
+            line-height: 1;
+            color: #fff;
+            background: rgba(178, 58, 50, 0.85);
+            padding: 2px 6px;
+            border-radius: 3px;
+            pointer-events: none;
+            white-space: nowrap;
         }
 
         .grid {
@@ -334,6 +375,7 @@
         const gainTextEl = document.getElementById("gainText");
         const rangesEl = document.getElementById("ranges");
         const rangeOverlayEl = document.getElementById("rangeOverlay");
+        const waveformEl = document.getElementById("waveform");
         const outputFormatEl = document.getElementById("outputFormat");
         const targetNameEl = document.getElementById("targetName");
         const previewPositionTextEl = document.getElementById("previewPositionText");
@@ -402,24 +444,39 @@
                 return;
             }
 
+            const scrollContainer = wavesurfer ? wavesurfer.getWrapper()?.parentElement : null;
+            const scrollWidth = scrollContainer ? scrollContainer.scrollWidth : rangeOverlayEl.clientWidth;
+            const scrollLeft = scrollContainer ? scrollContainer.scrollLeft : 0;
+
             const rangeHtml = deleteRanges
-                .map((range) => {
+                .map((range, index) => {
                     const left = Math.max(0, Math.min(100, (range.start_sec / duration) * 100));
-                    const width = Math.max(0.5, ((range.end_sec - range.start_sec) / duration) * 100);
-                    return `<div class="range-marker" style="left:${left}%;width:${width}%"></div>`;
+                    const width = Math.max(0.1, ((range.end_sec - range.start_sec) / duration) * 100);
+                    return `<div class="range-marker" style="left:${left}%;width:${width}%"><span class="range-label">✕${index + 1}</span></div>`;
                 })
                 .join("");
 
             const startValue = Number(startSecEl.value);
             const endValue = Number(endSecEl.value);
             const startHtml = Number.isFinite(startValue) && startValue >= 0 && startValue <= duration
-                ? `<div class="point-marker start" style="left:${(startValue / duration) * 100}%"></div>`
+                ? `<div class="point-marker start" style="left:${(startValue / duration) * 100}%"><span class="marker-label">始</span></div>`
                 : "";
             const endHtml = Number.isFinite(endValue) && endValue >= 0 && endValue <= duration
-                ? `<div class="point-marker end" style="left:${(endValue / duration) * 100}%"></div>`
+                ? `<div class="point-marker end" style="left:${(endValue / duration) * 100}%"><span class="marker-label">終</span></div>`
                 : "";
 
-            rangeOverlayEl.innerHTML = `${rangeHtml}${startHtml}${endHtml}`;
+            rangeOverlayEl.innerHTML =
+                `<div id="markerInner" style="position:relative;height:100%;width:${scrollWidth}px;transform:translateX(${-scrollLeft}px)">` +
+                `${rangeHtml}${startHtml}${endHtml}</div>`;
+        }
+
+        function syncOverlayScroll() {
+            const inner = document.getElementById("markerInner");
+            if (!inner || !wavesurfer) return;
+            const scrollContainer = wavesurfer.getWrapper()?.parentElement;
+            if (!scrollContainer) return;
+            inner.style.width = `${scrollContainer.scrollWidth}px`;
+            inner.style.transform = `translateX(${-scrollContainer.scrollLeft}px)`;
         }
 
         function resetPreviewWaveform() {
@@ -474,6 +531,7 @@
         function renderRanges() {
             if (!deleteRanges.length) {
                 rangesEl.innerHTML = "<li>目前沒有刪除區塊。</li>";
+                renderRangeMarkers();
                 return;
             }
 
@@ -490,14 +548,24 @@
             renderRangeMarkers();
         }
 
+        function updateAddRangeBtn() {
+            if (rangesFrozen) {
+                addRangeBtnEl.disabled = true;
+                return;
+            }
+            const s = Number(startSecEl.value);
+            const e = Number(endSecEl.value);
+            addRangeBtnEl.disabled = !(Number.isFinite(s) && Number.isFinite(e) && s >= 0 && e > s);
+        }
+
         function setRangesFrozen(frozen) {
             rangesFrozen = Boolean(frozen);
             startSecEl.disabled = rangesFrozen;
             endSecEl.disabled = rangesFrozen;
             setStartBtnEl.disabled = rangesFrozen;
             setEndBtnEl.disabled = rangesFrozen;
-            addRangeBtnEl.disabled = rangesFrozen;
             clearRangesBtnEl.disabled = rangesFrozen;
+            updateAddRangeBtn();
             renderRanges();
         }
 
@@ -650,6 +718,10 @@
                 endSecEl.value = duration.toFixed(2);
                 updateSourcePosition();
                 renderRangeMarkers();
+                const scrollContainer = wavesurfer.getWrapper()?.parentElement;
+                if (scrollContainer) {
+                    scrollContainer.addEventListener("scroll", syncOverlayScroll);
+                }
             });
             wavesurfer.on("audioprocess", updateSourcePosition);
             wavesurfer.on("seek", updateSourcePosition);
@@ -685,8 +757,42 @@
             zoomRangeEl.addEventListener("input", () => {
                 if (wavesurfer) {
                     wavesurfer.zoom(Number(zoomRangeEl.value));
+                    requestAnimationFrame(renderRangeMarkers);
                 }
             });
+
+            waveformEl.addEventListener("wheel", (e) => {
+                if (!e.metaKey || !wavesurfer || !duration) return;
+                e.preventDefault();
+
+                const scrollContainer = wavesurfer.getWrapper()?.parentElement;
+                if (!scrollContainer) return;
+
+                const rect = scrollContainer.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const oldScrollWidth = scrollContainer.scrollWidth;
+                const currentScrollLeft = scrollContainer.scrollLeft;
+
+                // Time position under the mouse cursor
+                const mouseTime = ((mouseX + currentScrollLeft) / oldScrollWidth) * duration;
+
+                // Adjust zoom (scale by deltaY for smooth trackpad support)
+                let delta = e.deltaY;
+                if (e.deltaMode === 1) delta *= 20;
+                const zoomDelta = -delta * 0.2;
+                const currentZoom = Number(zoomRangeEl.value);
+                const newZoom = Math.max(0, Math.min(200, currentZoom + zoomDelta));
+                zoomRangeEl.value = Math.round(newZoom);
+                wavesurfer.zoom(newZoom);
+
+                // Keep the time under the cursor in the same screen position
+                requestAnimationFrame(() => {
+                    const newScrollWidth = scrollContainer.scrollWidth;
+                    const newMousePixel = (mouseTime / duration) * newScrollWidth;
+                    scrollContainer.scrollLeft = newMousePixel - mouseX;
+                    renderRangeMarkers();
+                });
+            }, { passive: false });
 
             gainDbEl.addEventListener("input", updateGainText);
             outputFormatEl.addEventListener("change", applyAutoTargetName);
@@ -698,6 +804,7 @@
                 startSecEl.value = wavesurfer.getCurrentTime().toFixed(2);
                 enforceStartEndOrder();
                 renderRangeMarkers();
+                updateAddRangeBtn();
             });
 
             setEndBtnEl.addEventListener("click", () => {
@@ -707,15 +814,18 @@
                 endSecEl.value = wavesurfer.getCurrentTime().toFixed(2);
                 enforceStartEndOrder();
                 renderRangeMarkers();
+                updateAddRangeBtn();
             });
 
             startSecEl.addEventListener("input", () => {
                 enforceStartEndOrder();
                 renderRangeMarkers();
+                updateAddRangeBtn();
             });
             endSecEl.addEventListener("input", () => {
                 enforceStartEndOrder();
                 renderRangeMarkers();
+                updateAddRangeBtn();
             });
 
             addRangeBtnEl.addEventListener("click", () => {
