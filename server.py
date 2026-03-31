@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 import urllib.parse
+import urllib.request
 import uuid
 from typing import Any
 
@@ -22,6 +23,8 @@ DEFAULT_COOKIES_FILE = "www.youtube.com_cookies.txt"
 PREVIEW_DIR_NAME = ".tmp-edits"
 PREVIEW_TTL_SECONDS = 2 * 60 * 60
 PREVIEW_CLEANUP_INTERVAL_SECONDS = 10 * 60
+
+NAS_ENV_KEYS = ("NAS_HOST", "NAS_PORT", "NAS_UPLOAD_PATH")
 
 DOWNLOAD_PERCENT_RE = re.compile(r"\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%")
 SPEED_RE = re.compile(r"\sat\s+(?P<speed>\S+)")
@@ -754,7 +757,136 @@ def parse_json_body(handler: http.server.BaseHTTPRequestHandler) -> dict[str, An
     return json.loads(raw_body)
 
 
-def create_request_handler(job_manager: JobManager, edit_manager: EditManager | None = None):
+class NasClient:
+    """Synology FileStation API client for uploading files.
+
+    Supports two auth modes:
+    - Token mode (DSM 7+): set NAS_TOKEN env var
+    - Password mode (DSM 6+): set NAS_USER + NAS_PASSWORD env vars
+    Token takes priority when both are set.
+    """
+
+    def __init__(self, host: str, port: str, upload_path: str, *,
+                 token: str | None = None, user: str | None = None, password: str | None = None) -> None:
+        self.base_url = f"https://{host}:{port}/webapi"
+        self.upload_path = upload_path
+        self.token = token
+        self.user = user
+        self.password = password
+        self.auth_mode = "token" if token else "password"
+
+    def _login(self) -> str:
+        params = urllib.parse.urlencode({
+            "api": "SYNO.API.Auth",
+            "version": "3",
+            "method": "login",
+            "account": self.user,
+            "passwd": self.password,
+            "session": "FileStation",
+            "format": "sid",
+        })
+        url = f"{self.base_url}/auth.cgi?{params}"
+        req = urllib.request.Request(url)
+        ctx = self._ssl_context()
+        with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+            data = json.loads(resp.read())
+        if not data.get("success"):
+            error_code = data.get("error", {}).get("code", "unknown")
+            raise RuntimeError(f"NAS login failed (error code: {error_code})")
+        return data["data"]["sid"]
+
+    def _logout(self, sid: str) -> None:
+        params = urllib.parse.urlencode({
+            "api": "SYNO.API.Auth",
+            "version": "3",
+            "method": "logout",
+            "session": "FileStation",
+            "_sid": sid,
+        })
+        url = f"{self.base_url}/auth.cgi?{params}"
+        try:
+            req = urllib.request.Request(url)
+            ctx = self._ssl_context()
+            with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+                resp.read()
+        except Exception:
+            pass
+
+    def upload(self, file_path: str) -> dict[str, Any]:
+        if self.token:
+            return self._upload_file(self.token, file_path)
+        sid = self._login()
+        try:
+            return self._upload_file(sid, file_path)
+        finally:
+            self._logout(sid)
+
+    def _upload_file(self, sid: str, file_path: str) -> dict[str, Any]:
+        import ssl
+        boundary = uuid.uuid4().hex
+        file_name = os.path.basename(file_path)
+
+        parts: list[bytes] = []
+        for name, value in [("api", "SYNO.FileStation.Upload"), ("version", "2"),
+                            ("method", "upload"), ("path", self.upload_path),
+                            ("create_parents", "true"), ("overwrite", "true"),
+                            ("_sid", sid)]:
+            parts.append(
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode()
+            )
+
+        parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\n"
+            f"Content-Type: application/octet-stream\r\n\r\n".encode()
+        )
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+        parts.append(file_data)
+        parts.append(f"\r\n--{boundary}--\r\n".encode())
+        body = b"".join(parts)
+
+        url = f"{self.base_url}/entry.cgi"
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        ctx = self._ssl_context()
+        with urllib.request.urlopen(req, context=ctx, timeout=120) as resp:
+            data = json.loads(resp.read())
+
+        if not data.get("success"):
+            error_code = data.get("error", {}).get("code", "unknown")
+            raise RuntimeError(f"NAS upload failed (error code: {error_code})")
+
+        return {"success": True, "file_name": file_name, "upload_path": self.upload_path}
+
+    @staticmethod
+    def _ssl_context():
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+    @staticmethod
+    def from_env() -> "NasClient | None":
+        values = {k: os.environ.get(k) for k in NAS_ENV_KEYS}
+        if not all(values.values()):
+            return None
+        token = os.environ.get("NAS_TOKEN")
+        user = os.environ.get("NAS_USER")
+        password = os.environ.get("NAS_PASSWORD")
+        if not token and not (user and password):
+            return None
+        return NasClient(
+            host=values["NAS_HOST"],
+            port=values["NAS_PORT"],
+            upload_path=values["NAS_UPLOAD_PATH"],
+            token=token,
+            user=user,
+            password=password,
+        )
+
+
+def create_request_handler(job_manager: JobManager, edit_manager: EditManager | None = None, nas_client: NasClient | None = None):
     if edit_manager is None:
         edit_manager = EditManager(downloads_dir=job_manager.downloads_dir)
 
@@ -821,6 +953,10 @@ def create_request_handler(job_manager: JobManager, edit_manager: EditManager | 
 
             if parsed.path == "/settings":
                 self._send_json(job_manager.get_concurrency_settings())
+                return
+
+            if parsed.path == "/nas/status":
+                self._send_json({"available": nas_client is not None})
                 return
 
             preview_match = re.match(r"^/edits/previews/(?P<preview_id>[^/]+)$", parsed.path)
@@ -967,6 +1103,29 @@ def create_request_handler(job_manager: JobManager, edit_manager: EditManager | 
                 self._send_json(result, status_code=200)
                 return
 
+            if parsed.path == "/nas/upload":
+                if nas_client is None:
+                    self._send_json({"error": "NAS 未設定"}, status_code=501)
+                    return
+                file_name = data.get("file_name") if isinstance(data, dict) else None
+                if not isinstance(file_name, str) or not file_name.strip():
+                    self._send_json({"error": "file_name 必填"}, status_code=400)
+                    return
+                file_path = os.path.join(job_manager.downloads_dir, file_name)
+                if not os.path.isfile(file_path):
+                    self._send_json({"error": "檔案不存在"}, status_code=404)
+                    return
+                try:
+                    result = nas_client.upload(file_path)
+                except RuntimeError as exc:
+                    self._send_json({"error": str(exc)}, status_code=502)
+                    return
+                except Exception as exc:
+                    self._send_json({"error": f"上傳失敗：{exc}"}, status_code=502)
+                    return
+                self._send_json(result, status_code=200)
+                return
+
             retry_match = re.match(r"^/jobs/(?P<job_id>[^/]+)/retry$", parsed.path)
             if retry_match:
                 job_id = retry_match.group("job_id")
@@ -1040,7 +1199,12 @@ def run_server(port: int = PORT) -> None:
         cookies_file=cookies_file,
     )
     edit_manager = EditManager(downloads_dir=DOWNLOADS_DIR)
-    handler = create_request_handler(job_manager, edit_manager)
+    nas_client = NasClient.from_env()
+    if nas_client:
+        print(f"NAS upload enabled ({nas_client.auth_mode} mode) → {nas_client.upload_path}")
+    else:
+        print("WARNING: NAS upload disabled (need NAS_HOST + NAS_PORT + NAS_UPLOAD_PATH + either NAS_TOKEN or NAS_USER/NAS_PASSWORD)")
+    handler = create_request_handler(job_manager, edit_manager, nas_client)
 
     try:
         with ThreadingHTTPServer(("", port), handler) as httpd:

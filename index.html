@@ -342,6 +342,43 @@
             border-radius: 8px;
             padding: 0.55rem 0.7rem;
             background: #fcfdfe;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+        }
+
+        #fileList li .file-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 0.4rem;
+            align-items: center;
+        }
+
+        #fileList .nas-btn {
+            border: 0;
+            border-radius: 6px;
+            padding: 0.25rem 0.55rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            background: #e4ecef;
+            color: #1f2a2f;
+            white-space: nowrap;
+        }
+
+        #fileList .nas-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        #fileList .nas-btn.ok {
+            background: #d6f0e0;
+            color: #0b6f42;
+        }
+
+        #fileList .nas-btn.fail {
+            background: #fce7e5;
+            color: #b23a32;
         }
 
         #fileList a {
@@ -448,6 +485,7 @@
         const submitBtnEl = document.getElementById("submitBtn");
         const formEl = document.getElementById("downloadForm");
         let allJobs = [];
+        let nasAvailable = false;
         const activeStatuses = new Set();
 
         formEl.addEventListener("submit", async (event) => {
@@ -685,6 +723,10 @@
                 return;
             }
 
+            const nasBtn = nasAvailable
+                ? (encoded) => `<button class="nas-btn" data-nas-file="${encoded}">傳到 NAS</button>`
+                : () => "";
+
             fileListEl.innerHTML = files
                 .map((file) => {
                     const escaped = escapeHtml(file);
@@ -692,7 +734,10 @@
                     return `
                         <li>
                             <a href="downloads/${encoded}" target="_blank">${escaped}</a>
-                            <a href="/editor?file=${encoded}" style="margin-left:10px;">編輯</a>
+                            <span class="file-actions">
+                                <a href="/editor?file=${encoded}">編輯</a>
+                                ${nasBtn(encoded)}
+                            </span>
                         </li>
                     `;
                 })
@@ -784,6 +829,56 @@
         }
 
         async function bootstrap() {
+            try {
+                const nasResp = await fetch("/nas/status");
+                if (nasResp.ok) {
+                    const nasData = await nasResp.json();
+                    nasAvailable = Boolean(nasData.available);
+                }
+            } catch (_) {}
+
+            fileListEl.addEventListener("click", async (e) => {
+                const btn = e.target.closest("button[data-nas-file]");
+                if (!btn) return;
+                const fileName = decodeURIComponent(btn.dataset.nasFile);
+                btn.disabled = true;
+                btn.textContent = "上傳中…";
+                btn.className = "nas-btn";
+                try {
+                    const resp = await fetch("/nas/upload", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ file_name: fileName }),
+                    });
+                    const data = await resp.json();
+                    if (resp.ok) {
+                        btn.textContent = "✓ 已傳送";
+                        btn.className = "nas-btn ok";
+                        setTimeout(() => {
+                            btn.textContent = "傳到 NAS";
+                            btn.className = "nas-btn";
+                            btn.disabled = false;
+                        }, 3000);
+                    } else {
+                        btn.textContent = data.error || "失敗";
+                        btn.className = "nas-btn fail";
+                        setTimeout(() => {
+                            btn.textContent = "傳到 NAS";
+                            btn.className = "nas-btn";
+                            btn.disabled = false;
+                        }, 4000);
+                    }
+                } catch (_) {
+                    btn.textContent = "連線失敗";
+                    btn.className = "nas-btn fail";
+                    setTimeout(() => {
+                        btn.textContent = "傳到 NAS";
+                        btn.className = "nas-btn";
+                        btn.disabled = false;
+                    }, 4000);
+                }
+            });
+
             await Promise.all([refreshJobs(), refreshFiles(), refreshSettings()]);
             setInterval(() => {
                 refreshJobs();
