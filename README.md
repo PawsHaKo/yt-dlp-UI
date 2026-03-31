@@ -9,6 +9,10 @@ A self-hosted web interface for downloading YouTube audio as MP3 by using `yt-dl
 - **Real progress updates:** UI shows actual `yt-dlp` status (`queued / downloading / postprocessing / completed / failed`).
 - **Retry failed jobs:** Failed entries can be retried without pasting URLs again.
 - **Downloaded file list:** Completed files are listed and can be opened directly.
+- **Audio editor:** Trim, delete sections, and adjust volume of downloaded audio files with a waveform-based editor.
+  - Zoom with the slider bar or **Cmd + scroll wheel** at the mouse position.
+  - Visual start/end markers and numbered delete-range labels on the waveform.
+- **NAS upload:** One-click upload of downloaded files to a Synology NAS via the FileStation API.
 
 ## Prerequisites
 
@@ -45,6 +49,26 @@ Before you begin, you need to have the following software installed on your syst
       export YTDLP_COOKIES_FILE=/absolute/path/to/cookies.txt
       ```
     - The server will pass this file to `yt-dlp --cookies` automatically (no keychain access needed).
+
+5.  **(Optional) Synology NAS upload**
+    - To enable the "傳到 NAS" button in the file list, set the following environment variables:
+      ```sh
+      export NAS_HOST=192.168.1.100      # NAS IP or hostname
+      export NAS_PORT=5001               # HTTPS port (default 5001)
+      export NAS_UPLOAD_PATH=/music/downloads  # Target folder on NAS
+      ```
+    - **Authentication** — choose one:
+      - **Token mode (DSM 7+, recommended):**
+        ```sh
+        export NAS_TOKEN=your_access_token
+        ```
+        Create a token in DSM → Personal Settings → Security → Personal Access Token.
+      - **Password mode (DSM 6+):**
+        ```sh
+        export NAS_USER=your_username
+        export NAS_PASSWORD=your_password
+        ```
+    - When NAS is not configured, the upload button is automatically hidden.
 
 ## Setup
 
@@ -96,3 +120,8 @@ Before you begin, you need to have the following software installed on your syst
   - Retries only failed jobs by creating a new queued job with the same URL.
 - `GET /files`
   - Returns downloaded file names from `downloads/`.
+- `GET /nas/status`
+  - Returns `{ "available": true/false }` indicating whether NAS upload is configured.
+- `POST /nas/upload`
+  - Body: `{ "file_name": "example.mp3" }`
+  - Uploads the file to the configured Synology NAS. Returns 501 if NAS is not configured.
