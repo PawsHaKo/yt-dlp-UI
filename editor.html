@@ -273,6 +273,59 @@
             min-height: 1.3rem;
         }
 
+        .status-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .status-row .status {
+            margin-top: 0;
+        }
+
+        .btn-inline-retry {
+            border: 1px solid var(--primary);
+            border-radius: 8px;
+            background: var(--primary-soft);
+            color: var(--primary);
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 0.3rem 0.65rem;
+            cursor: pointer;
+        }
+
+        .btn-inline-retry:hover {
+            background: var(--primary);
+            color: #fff;
+        }
+
+        .missing-file-notice {
+            text-align: center;
+            padding: 2rem 1rem;
+        }
+
+        .missing-file-notice p {
+            color: var(--danger);
+            font-size: 1rem;
+            margin: 0 0 1rem;
+        }
+
+        .missing-file-notice a {
+            display: inline-block;
+            background: var(--primary);
+            color: #fff;
+            text-decoration: none;
+            padding: 0.55rem 1.2rem;
+            border-radius: 8px;
+            font-weight: 600;
+        }
+
+        .missing-file-notice a:hover {
+            opacity: 0.9;
+        }
+
         .ok {
             color: #0b6f42;
         }
@@ -357,7 +410,10 @@
                     <button id="saveAsBtn" class="primary">另存新檔</button>
                 </div>
 
-                <p id="status" class="status"></p>
+                <div class="status-row">
+                    <p id="status" class="status"></p>
+                    <button id="retryActionBtn" class="btn-inline-retry" style="display:none;">重新嘗試</button>
+                </div>
             </div>
         </section>
     </main>
@@ -380,6 +436,8 @@
         const targetNameEl = document.getElementById("targetName");
         const previewPositionTextEl = document.getElementById("previewPositionText");
         const statusEl = document.getElementById("status");
+        const retryActionBtnEl = document.getElementById("retryActionBtn");
+        let pendingRetryAction = null;
 
         const playBtnEl = document.getElementById("playBtn");
         const rewindBtnEl = document.getElementById("rewindBtn");
@@ -404,9 +462,11 @@
         let lastAutoTargetName = "";
         const deleteRanges = [];
 
-        function setStatus(message, type = "") {
+        function setStatus(message, type = "", retryFn = null) {
             statusEl.textContent = message;
             statusEl.className = `status ${type}`.trim();
+            pendingRetryAction = retryFn;
+            retryActionBtnEl.style.display = retryFn ? "inline-block" : "none";
         }
 
         function formatSec(value) {
@@ -440,7 +500,7 @@
 
         function renderRangeMarkers() {
             if (!duration) {
-                rangeOverlayEl.innerHTML = "";
+                rangeOverlayEl.replaceChildren();
                 return;
             }
 
@@ -448,26 +508,49 @@
             const scrollWidth = scrollContainer ? scrollContainer.scrollWidth : rangeOverlayEl.clientWidth;
             const scrollLeft = scrollContainer ? scrollContainer.scrollLeft : 0;
 
-            const rangeHtml = deleteRanges
-                .map((range, index) => {
-                    const left = Math.max(0, Math.min(100, (range.start_sec / duration) * 100));
-                    const width = Math.max(0.1, ((range.end_sec - range.start_sec) / duration) * 100);
-                    return `<div class="range-marker" style="left:${left}%;width:${width}%"><span class="range-label">✕${index + 1}</span></div>`;
-                })
-                .join("");
+            const inner = document.createElement("div");
+            inner.id = "markerInner";
+            inner.style.cssText = `position:relative;height:100%;width:${scrollWidth}px;transform:translateX(${-scrollLeft}px)`;
+
+            for (let i = 0; i < deleteRanges.length; i++) {
+                const range = deleteRanges[i];
+                const left = Math.max(0, Math.min(100, (range.start_sec / duration) * 100));
+                const width = Math.max(0.1, ((range.end_sec - range.start_sec) / duration) * 100);
+                const marker = document.createElement("div");
+                marker.className = "range-marker";
+                marker.style.cssText = `left:${left}%;width:${width}%`;
+                const label = document.createElement("span");
+                label.className = "range-label";
+                label.textContent = `✕${i + 1}`;
+                marker.appendChild(label);
+                inner.appendChild(marker);
+            }
 
             const startValue = Number(startSecEl.value);
-            const endValue = Number(endSecEl.value);
-            const startHtml = Number.isFinite(startValue) && startValue >= 0 && startValue <= duration
-                ? `<div class="point-marker start" style="left:${(startValue / duration) * 100}%"><span class="marker-label">始</span></div>`
-                : "";
-            const endHtml = Number.isFinite(endValue) && endValue >= 0 && endValue <= duration
-                ? `<div class="point-marker end" style="left:${(endValue / duration) * 100}%"><span class="marker-label">終</span></div>`
-                : "";
+            if (Number.isFinite(startValue) && startValue >= 0 && startValue <= duration) {
+                const startMarker = document.createElement("div");
+                startMarker.className = "point-marker start";
+                startMarker.style.left = `${(startValue / duration) * 100}%`;
+                const startLabel = document.createElement("span");
+                startLabel.className = "marker-label";
+                startLabel.textContent = "始";
+                startMarker.appendChild(startLabel);
+                inner.appendChild(startMarker);
+            }
 
-            rangeOverlayEl.innerHTML =
-                `<div id="markerInner" style="position:relative;height:100%;width:${scrollWidth}px;transform:translateX(${-scrollLeft}px)">` +
-                `${rangeHtml}${startHtml}${endHtml}</div>`;
+            const endValue = Number(endSecEl.value);
+            if (Number.isFinite(endValue) && endValue >= 0 && endValue <= duration) {
+                const endMarker = document.createElement("div");
+                endMarker.className = "point-marker end";
+                endMarker.style.left = `${(endValue / duration) * 100}%`;
+                const endLabel = document.createElement("span");
+                endLabel.className = "marker-label";
+                endLabel.textContent = "終";
+                endMarker.appendChild(endLabel);
+                inner.appendChild(endMarker);
+            }
+
+            rangeOverlayEl.replaceChildren(inner);
         }
 
         function syncOverlayScroll() {
@@ -530,21 +613,27 @@
 
         function renderRanges() {
             if (!deleteRanges.length) {
-                rangesEl.innerHTML = "<li>目前沒有刪除區塊。</li>";
+                const li = document.createElement("li");
+                li.textContent = "目前沒有刪除區塊。";
+                rangesEl.replaceChildren(li);
                 renderRangeMarkers();
                 return;
             }
 
-            rangesEl.innerHTML = deleteRanges
-                .map((range, index) => {
-                    return `
-                        <li>
-                            <span>#${index + 1} 刪除 ${range.start_sec.toFixed(2)}s - ${range.end_sec.toFixed(2)}s</span>
-                            <button data-remove-index="${index}" class="warn" ${rangesFrozen ? "disabled" : ""}>移除</button>
-                        </li>
-                    `;
-                })
-                .join("");
+            const fragment = document.createDocumentFragment();
+            deleteRanges.forEach((range, index) => {
+                const li = document.createElement("li");
+                const span = document.createElement("span");
+                span.textContent = `#${index + 1} 刪除 ${range.start_sec.toFixed(2)}s - ${range.end_sec.toFixed(2)}s`;
+                const btn = document.createElement("button");
+                btn.className = "warn";
+                btn.setAttribute("data-remove-index", String(index));
+                btn.textContent = "移除";
+                if (rangesFrozen) btn.disabled = true;
+                li.append(span, btn);
+                fragment.appendChild(li);
+            });
+            rangesEl.replaceChildren(fragment);
             renderRangeMarkers();
         }
 
@@ -623,6 +712,7 @@
             await deletePreview();
             setStatus("正在產生預覽...");
             refreshPreviewBtnEl.disabled = true;
+            refreshPreviewBtnEl.textContent = "⏳ 產生中…";
 
             try {
                 const response = await fetch("/edits/preview", {
@@ -638,7 +728,7 @@
 
                 const payload = await response.json();
                 if (!response.ok) {
-                    setStatus(payload.error || "預覽建立失敗", "error");
+                    setStatus(payload.error || "預覽建立失敗", "error", refreshPreview);
                     return;
                 }
 
@@ -646,9 +736,10 @@
                 mountPreviewWaveform(`${payload.preview_url}?t=${Date.now()}`);
                 setStatus("預覽已更新，可直接播放確認。", "ok");
             } catch (error) {
-                setStatus("預覽建立失敗，請稍後重試。", "error");
+                setStatus("預覽建立失敗，請稍後重試。", "error", refreshPreview);
             } finally {
                 refreshPreviewBtnEl.disabled = false;
+                refreshPreviewBtnEl.textContent = "提交修改";
                 setRangesFrozen(false);
             }
         }
@@ -668,6 +759,11 @@
             setStatus("正在提交...");
             saveAsBtnEl.disabled = true;
             overwriteBtnEl.disabled = true;
+            if (mode === "overwrite") {
+                overwriteBtnEl.textContent = "⏳ 提交中…";
+            } else {
+                saveAsBtnEl.textContent = "⏳ 提交中…";
+            }
 
             try {
                 const response = await fetch("/edits/commit", {
@@ -678,7 +774,7 @@
                 const data = await response.json();
 
                 if (!response.ok) {
-                    setStatus(data.error || "提交失敗", "error");
+                    setStatus(data.error || "提交失敗", "error", () => commit(mode));
                     return;
                 }
 
@@ -687,16 +783,33 @@
 
                 setStatus(`完成：${data.file_name}`, "ok");
             } catch (error) {
-                setStatus("提交失敗，請稍後重試。", "error");
+                setStatus("提交失敗，請稍後重試。", "error", () => commit(mode));
             } finally {
                 saveAsBtnEl.disabled = false;
                 overwriteBtnEl.disabled = false;
+                overwriteBtnEl.textContent = "確認並覆蓋";
+                saveAsBtnEl.textContent = "另存新檔";
             }
         }
 
         function bootstrap() {
+            retryActionBtnEl.addEventListener("click", () => {
+                if (pendingRetryAction) {
+                    pendingRetryAction();
+                }
+            });
+
             if (!sourceFile) {
-                setStatus("缺少檔案參數，請從首頁檔案列表進入。", "error");
+                const wrap = document.querySelector(".wrap");
+                const notice = document.createElement("div");
+                notice.className = "missing-file-notice";
+                const msg = document.createElement("p");
+                msg.textContent = "缺少檔案參數，請從首頁檔案列表進入。";
+                const link = document.createElement("a");
+                link.href = "/";
+                link.textContent = "← 回到首頁";
+                notice.append(msg, link);
+                wrap.replaceChildren(notice);
                 return;
             }
 
@@ -729,7 +842,10 @@
             wavesurfer.on("pause", updatePlayButton);
 
             wavesurfer.on("error", () => {
-                setStatus("音訊載入失敗，請確認檔案是否存在。", "error");
+                setStatus("音訊載入失敗，請確認檔案是否存在。", "error", () => {
+                    setStatus("重新載入中…");
+                    wavesurfer.load(`/downloads/${encodeURIComponent(sourceFile)}`);
+                });
             });
 
             playBtnEl.addEventListener("click", () => {

@@ -458,9 +458,15 @@
         <section class="panel">
             <div class="panel-head">
                 <h2 class="panel-title">已下載檔案</h2>
+                <span id="fileCount" class="chip" style="display:none;"></span>
             </div>
             <div class="panel-body">
                 <ul id="fileList"></ul>
+                <div id="filePagination" style="display:none;margin-top:0.7rem;justify-content:center;align-items:center;gap:0.6rem;">
+                    <button id="filePrevBtn" class="btn-submit" style="padding:0.3rem 0.7rem;font-size:0.85rem;">上一頁</button>
+                    <span id="filePageInfo" style="font-size:0.85rem;color:var(--muted);"></span>
+                    <button id="fileNextBtn" class="btn-submit" style="padding:0.3rem 0.7rem;font-size:0.85rem;">下一頁</button>
+                </div>
             </div>
         </section>
     </main>
@@ -484,7 +490,15 @@
         const urlsEl = document.getElementById("youtubeUrls");
         const submitBtnEl = document.getElementById("submitBtn");
         const formEl = document.getElementById("downloadForm");
+        const filePaginationEl = document.getElementById("filePagination");
+        const filePrevBtnEl = document.getElementById("filePrevBtn");
+        const fileNextBtnEl = document.getElementById("fileNextBtn");
+        const filePageInfoEl = document.getElementById("filePageInfo");
+        const fileCountEl = document.getElementById("fileCount");
         let allJobs = [];
+        let allFiles = [];
+        let filePage = 1;
+        const FILES_PER_PAGE = 20;
         let nasAvailable = false;
         const activeStatuses = new Set();
 
@@ -499,6 +513,7 @@
 
             urlsEl.value = normalized.join("\n");
             submitBtnEl.disabled = true;
+            submitBtnEl.textContent = "提交中…";
 
             try {
                 const response = await fetch("/jobs", {
@@ -522,6 +537,7 @@
                 setHint("網路連線異常，請稍後再試。", true);
             } finally {
                 submitBtnEl.disabled = false;
+                submitBtnEl.textContent = "加入佇列";
             }
         });
 
@@ -530,6 +546,7 @@
             if (retryBtn) {
                 const jobId = retryBtn.getAttribute("data-retry-id");
                 retryBtn.disabled = true;
+                retryBtn.textContent = "重試中…";
 
                 try {
                     const response = await fetch(`/jobs/${jobId}/retry`, { method: "POST" });
@@ -538,6 +555,7 @@
                     if (!response.ok) {
                         alert(payload.error || "重試失敗");
                         retryBtn.disabled = false;
+                        retryBtn.textContent = "重試";
                         return;
                     }
 
@@ -546,6 +564,7 @@
                 } catch (error) {
                     alert("重試時發生網路錯誤");
                     retryBtn.disabled = false;
+                    retryBtn.textContent = "重試";
                 }
                 return;
             }
@@ -622,15 +641,6 @@
             return result;
         }
 
-        function escapeHtml(text) {
-            return text
-                .replaceAll("&", "&amp;")
-                .replaceAll("<", "&lt;")
-                .replaceAll(">", "&gt;")
-                .replaceAll('"', "&quot;")
-                .replaceAll("'", "&#39;");
-        }
-
         function renderSummary(jobs) {
             const counts = {
                 queued: 0,
@@ -647,14 +657,25 @@
             }
 
             const total = jobs.length;
-            queueSummaryEl.innerHTML = `
-                <button class="chip chip-btn ${activeStatuses.size === 0 ? "active" : ""}" data-filter="all">全部 ${total}</button>
-                <button class="chip chip-queued chip-btn ${activeStatuses.has("queued") ? "active" : ""}" data-filter="queued">排隊 ${counts.queued}</button>
-                <button class="chip chip-downloading chip-btn ${activeStatuses.has("downloading") ? "active" : ""}" data-filter="downloading">下載中 ${counts.downloading}</button>
-                <button class="chip chip-postprocessing chip-btn ${activeStatuses.has("postprocessing") ? "active" : ""}" data-filter="postprocessing">後處理 ${counts.postprocessing}</button>
-                <button class="chip chip-completed chip-btn ${activeStatuses.has("completed") ? "active" : ""}" data-filter="completed">完成 ${counts.completed}</button>
-                <button class="chip chip-failed chip-btn ${activeStatuses.has("failed") ? "active" : ""}" data-filter="failed">失敗 ${counts.failed}</button>
-            `;
+            const items = [
+                { filter: "all", cls: "chip chip-btn", label: `全部 ${total}` },
+                { filter: "queued", cls: "chip chip-queued chip-btn", label: `排隊 ${counts.queued}` },
+                { filter: "downloading", cls: "chip chip-downloading chip-btn", label: `下載中 ${counts.downloading}` },
+                { filter: "postprocessing", cls: "chip chip-postprocessing chip-btn", label: `後處理 ${counts.postprocessing}` },
+                { filter: "completed", cls: "chip chip-completed chip-btn", label: `完成 ${counts.completed}` },
+                { filter: "failed", cls: "chip chip-failed chip-btn", label: `失敗 ${counts.failed}` },
+            ];
+
+            const fragment = document.createDocumentFragment();
+            for (const item of items) {
+                const btn = document.createElement("button");
+                const isActive = item.filter === "all" ? activeStatuses.size === 0 : activeStatuses.has(item.filter);
+                btn.className = `${item.cls}${isActive ? " active" : ""}`;
+                btn.setAttribute("data-filter", item.filter);
+                btn.textContent = item.label;
+                fragment.appendChild(btn);
+            }
+            queueSummaryEl.replaceChildren(fragment);
         }
 
         function getFilteredJobs(jobs) {
@@ -667,81 +688,148 @@
         function renderQueue(jobs) {
             if (!jobs.length) {
                 queueEmptyEl.style.display = "block";
-                queueListEl.innerHTML = "";
+                queueListEl.replaceChildren();
                 return;
             }
 
             queueEmptyEl.style.display = "none";
+            const validStatuses = new Set(Object.keys(statusMap));
 
-            queueListEl.innerHTML = jobs
-                .map((job) => {
-                    const title = escapeHtml(job.file_name || job.url || "未命名任務");
-                    const url = escapeHtml(job.url || "");
-                    const status = job.status || "queued";
-                    const statusLabel = statusMap[status] || status;
-                    const progress = Number.isFinite(job.progress) ? Math.max(0, Math.min(100, Math.round(job.progress))) : 0;
-                    const speedText = job.speed ? `速度 ${escapeHtml(job.speed)}` : "速度 -";
-                    const etaText = job.eta ? `剩餘 ${escapeHtml(job.eta)}` : "剩餘 -";
-                    const createdAt = job.created_at ? new Date(job.created_at).toLocaleString("zh-TW", { hour12: false }) : "";
-                    const errorHtml = job.error ? `<p class="job-error">${escapeHtml(job.error)}</p>` : "";
-                    const retryButton = status === "failed"
-                        ? `<button class="btn-retry" data-retry-id="${escapeHtml(job.id)}">重試</button>`
-                        : "";
-                    const deleteDisabled = status === "downloading" || status === "postprocessing";
-                    const deleteButton = `<button class="btn-delete" data-delete-id="${escapeHtml(job.id)}" ${deleteDisabled ? "disabled" : ""}>刪除</button>`;
-                    const actionHtml = `<div class="job-actions">${retryButton}${deleteButton}</div>`;
+            const fragment = document.createDocumentFragment();
+            for (const job of jobs) {
+                const title = job.file_name || job.url || "未命名任務";
+                const url = job.url || "";
+                const status = validStatuses.has(job.status) ? job.status : "queued";
+                const statusLabel = statusMap[status] || status;
+                const progress = Number.isFinite(job.progress) ? Math.max(0, Math.min(100, Math.round(job.progress))) : 0;
+                const speedText = job.speed ? `速度 ${job.speed}` : "速度 -";
+                const etaText = job.eta ? `剩餘 ${job.eta}` : "剩餘 -";
+                const createdAt = job.created_at ? new Date(job.created_at).toLocaleString("zh-TW", { hour12: false }) : "";
 
-                    return `
-                        <article class="job">
-                            <div class="job-head">
-                                <div>
-                                    <p class="job-title">${title}</p>
-                                    <p class="job-url">${url}</p>
-                                </div>
-                                <span class="status-badge status-${status}">${statusLabel}</span>
-                            </div>
-                            <div class="job-progress">
-                                <div style="width: ${progress}%;"></div>
-                            </div>
-                            <div class="job-meta">
-                                <span>進度 ${progress}%</span>
-                                <span>${speedText}</span>
-                                <span>${etaText}</span>
-                                <span>${createdAt}</span>
-                            </div>
-                            ${errorHtml}
-                            ${actionHtml}
-                        </article>
-                    `;
-                })
-                .join("");
+                const article = document.createElement("article");
+                article.className = "job";
+
+                const jobHead = document.createElement("div");
+                jobHead.className = "job-head";
+                const titleDiv = document.createElement("div");
+                const titleP = document.createElement("p");
+                titleP.className = "job-title";
+                titleP.textContent = title;
+                const urlP = document.createElement("p");
+                urlP.className = "job-url";
+                urlP.textContent = url;
+                titleDiv.append(titleP, urlP);
+                const badge = document.createElement("span");
+                badge.className = `status-badge status-${status}`;
+                badge.textContent = statusLabel;
+                jobHead.append(titleDiv, badge);
+
+                const progressDiv = document.createElement("div");
+                progressDiv.className = "job-progress";
+                const progressBar = document.createElement("div");
+                progressBar.style.width = `${progress}%`;
+                progressDiv.appendChild(progressBar);
+
+                const metaDiv = document.createElement("div");
+                metaDiv.className = "job-meta";
+                for (const text of [`進度 ${progress}%`, speedText, etaText, createdAt]) {
+                    const span = document.createElement("span");
+                    span.textContent = text;
+                    metaDiv.appendChild(span);
+                }
+
+                article.append(jobHead, progressDiv, metaDiv);
+
+                if (job.error) {
+                    const errorP = document.createElement("p");
+                    errorP.className = "job-error";
+                    errorP.textContent = job.error;
+                    article.appendChild(errorP);
+                }
+
+                const actionsDiv = document.createElement("div");
+                actionsDiv.className = "job-actions";
+                if (status === "failed") {
+                    const retryBtn = document.createElement("button");
+                    retryBtn.className = "btn-retry";
+                    retryBtn.setAttribute("data-retry-id", job.id);
+                    retryBtn.textContent = "重試";
+                    actionsDiv.appendChild(retryBtn);
+                }
+                const deleteBtn = document.createElement("button");
+                deleteBtn.className = "btn-delete";
+                deleteBtn.setAttribute("data-delete-id", job.id);
+                deleteBtn.textContent = "刪除";
+                if (status === "downloading" || status === "postprocessing") {
+                    deleteBtn.disabled = true;
+                }
+                actionsDiv.appendChild(deleteBtn);
+                article.appendChild(actionsDiv);
+
+                fragment.appendChild(article);
+            }
+            queueListEl.replaceChildren(fragment);
         }
 
         function renderFileList(files) {
+            allFiles = files;
+            const totalPages = Math.max(1, Math.ceil(files.length / FILES_PER_PAGE));
+            if (filePage > totalPages) filePage = totalPages;
+
             if (!files.length) {
-                fileListEl.innerHTML = "<li>目前沒有已下載檔案。</li>";
+                const li = document.createElement("li");
+                li.textContent = "目前沒有已下載檔案。";
+                fileListEl.replaceChildren(li);
+                filePaginationEl.style.display = "none";
+                fileCountEl.style.display = "none";
                 return;
             }
 
-            const nasBtn = nasAvailable
-                ? (encoded) => `<button class="nas-btn" data-nas-file="${encoded}">傳到 NAS</button>`
-                : () => "";
+            fileCountEl.textContent = `共 ${files.length} 個`;
+            fileCountEl.style.display = "inline-flex";
 
-            fileListEl.innerHTML = files
-                .map((file) => {
-                    const escaped = escapeHtml(file);
-                    const encoded = encodeURIComponent(file);
-                    return `
-                        <li>
-                            <a href="downloads/${encoded}" target="_blank">${escaped}</a>
-                            <span class="file-actions">
-                                <a href="/editor?file=${encoded}">編輯</a>
-                                ${nasBtn(encoded)}
-                            </span>
-                        </li>
-                    `;
-                })
-                .join("");
+            const start = (filePage - 1) * FILES_PER_PAGE;
+            const pageFiles = files.slice(start, start + FILES_PER_PAGE);
+
+            const fragment = document.createDocumentFragment();
+            for (const file of pageFiles) {
+                const encoded = encodeURIComponent(file);
+                const li = document.createElement("li");
+
+                const link = document.createElement("a");
+                link.href = `downloads/${encoded}`;
+                link.target = "_blank";
+                link.textContent = file;
+
+                const actions = document.createElement("span");
+                actions.className = "file-actions";
+
+                const editLink = document.createElement("a");
+                editLink.href = `/editor?file=${encoded}`;
+                editLink.textContent = "編輯";
+                actions.appendChild(editLink);
+
+                if (nasAvailable) {
+                    const nasBtn = document.createElement("button");
+                    nasBtn.className = "nas-btn";
+                    nasBtn.setAttribute("data-nas-file", encoded);
+                    nasBtn.textContent = "傳到 NAS";
+                    actions.appendChild(nasBtn);
+                }
+
+                li.append(link, actions);
+                fragment.appendChild(li);
+            }
+            fileListEl.replaceChildren(fragment);
+
+            if (totalPages > 1) {
+                filePaginationEl.style.display = "flex";
+                filePageInfoEl.textContent = `第 ${filePage} / ${totalPages} 頁`;
+                filePrevBtnEl.disabled = filePage <= 1;
+                fileNextBtnEl.disabled = filePage >= totalPages;
+            } else {
+                filePaginationEl.style.display = "none";
+            }
         }
 
         function setHint(message, isError = false) {
@@ -760,11 +848,15 @@
 
                 const maxAllowed = Number.isInteger(settings.max_allowed) ? settings.max_allowed : 3;
                 const current = settings.max_concurrent_jobs;
-                const options = [];
+                const fragment = document.createDocumentFragment();
                 for (let i = 1; i <= Math.max(1, maxAllowed); i += 1) {
-                    options.push(`<option value="${i}" ${i === current ? "selected" : ""}>${i}</option>`);
+                    const opt = document.createElement("option");
+                    opt.value = String(i);
+                    opt.textContent = String(i);
+                    if (i === current) opt.selected = true;
+                    fragment.appendChild(opt);
                 }
-                concurrencySelectEl.innerHTML = options.join("");
+                concurrencySelectEl.replaceChildren(fragment);
             } catch (error) {
                 setHint("讀取下載設定失敗。", true);
             }
@@ -829,6 +921,20 @@
         }
 
         async function bootstrap() {
+            filePrevBtnEl.addEventListener("click", () => {
+                if (filePage > 1) {
+                    filePage -= 1;
+                    renderFileList(allFiles);
+                }
+            });
+            fileNextBtnEl.addEventListener("click", () => {
+                const totalPages = Math.ceil(allFiles.length / FILES_PER_PAGE);
+                if (filePage < totalPages) {
+                    filePage += 1;
+                    renderFileList(allFiles);
+                }
+            });
+
             try {
                 const nasResp = await fetch("/nas/status");
                 if (nasResp.ok) {
