@@ -1172,6 +1172,28 @@ def create_request_handler(job_manager: JobManager, edit_manager: EditManager | 
                 self._send_json({"deleted": True}, status_code=200)
                 return
 
+            file_match = re.match(r"^/files/(?P<file_name>.+)$", parsed.path)
+            if file_match:
+                raw_name = urllib.parse.unquote(file_match.group("file_name"))
+                try:
+                    file_path, safe_name = resolve_file_path(job_manager.downloads_dir, raw_name)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status_code=400)
+                    return
+
+                if not os.path.isfile(file_path):
+                    self._send_json({"error": "找不到檔案"}, status_code=404)
+                    return
+
+                try:
+                    os.remove(file_path)
+                except OSError as exc:
+                    self._send_json({"error": f"刪除失敗：{exc}"}, status_code=500)
+                    return
+
+                self._send_json({"deleted": True, "file_name": safe_name}, status_code=200)
+                return
+
             self._send_json({"error": "Not Found"}, status_code=404)
 
     return MyHttpRequestHandler

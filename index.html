@@ -381,6 +381,26 @@
             color: #b23a32;
         }
 
+        #fileList .file-del-btn {
+            border: 1px solid #d4a0a0;
+            border-radius: 6px;
+            padding: 0.25rem 0.55rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            background: #fff;
+            color: #b23a32;
+            white-space: nowrap;
+        }
+
+        #fileList .file-del-btn:hover:not(:disabled) {
+            background: #fce7e5;
+        }
+
+        #fileList .file-del-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
         #fileList a {
             color: #0a5f7b;
             font-size: 0.9rem;
@@ -817,6 +837,12 @@
                     actions.appendChild(nasBtn);
                 }
 
+                const delBtn = document.createElement("button");
+                delBtn.className = "file-del-btn";
+                delBtn.setAttribute("data-del-file", encoded);
+                delBtn.textContent = "刪除";
+                actions.appendChild(delBtn);
+
                 li.append(link, actions);
                 fragment.appendChild(li);
             }
@@ -982,6 +1008,33 @@
                         btn.className = "nas-btn";
                         btn.disabled = false;
                     }, 4000);
+                }
+            });
+
+            fileListEl.addEventListener("click", async (e) => {
+                const delBtn = e.target.closest("button[data-del-file]");
+                if (!delBtn) return;
+                const fileName = decodeURIComponent(delBtn.dataset.delFile);
+                if (!confirm(`確定要刪除「${fileName}」嗎？此操作無法復原。`)) return;
+
+                delBtn.disabled = true;
+                delBtn.textContent = "刪除中…";
+
+                try {
+                    const resp = await fetch(`/files/${encodeURIComponent(fileName)}`, { method: "DELETE" });
+                    const data = await resp.json();
+                    if (resp.ok) {
+                        setHint(`已刪除「${fileName}」`);
+                        await refreshFiles();
+                    } else {
+                        alert(data.error || "刪除失敗");
+                        delBtn.disabled = false;
+                        delBtn.textContent = "刪除";
+                    }
+                } catch (_) {
+                    alert("刪除時發生網路錯誤");
+                    delBtn.disabled = false;
+                    delBtn.textContent = "刪除";
                 }
             });
 
