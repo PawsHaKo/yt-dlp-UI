@@ -26,6 +26,26 @@ PREVIEW_CLEANUP_INTERVAL_SECONDS = 10 * 60
 
 NAS_ENV_KEYS = ("NAS_HOST", "NAS_PORT", "NAS_UPLOAD_PATH")
 
+
+def load_dotenv(path: str = ".env") -> None:
+    """Load variables from a .env file into os.environ (no-op if file missing)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                if not key:
+                    continue
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                    value = value[1:-1]
+                os.environ.setdefault(key, value)
+    except FileNotFoundError:
+        pass
+
 DOWNLOAD_PERCENT_RE = re.compile(r"\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%")
 SPEED_RE = re.compile(r"\sat\s+(?P<speed>\S+)")
 ETA_RE = re.compile(r"\sETA\s+(?P<eta>\S+)")
@@ -767,8 +787,10 @@ class NasClient:
     """
 
     def __init__(self, host: str, port: str, upload_path: str, *,
+                 scheme: str = "https",
                  token: str | None = None, user: str | None = None, password: str | None = None) -> None:
-        self.base_url = f"https://{host}:{port}/webapi"
+        self.scheme = scheme
+        self.base_url = f"{scheme}://{host}:{port}/webapi"
         self.upload_path = upload_path
         self.token = token
         self.user = user
@@ -787,7 +809,7 @@ class NasClient:
         })
         url = f"{self.base_url}/auth.cgi?{params}"
         req = urllib.request.Request(url)
-        ctx = self._ssl_context()
+        ctx = self._ssl_context() if self.scheme == "https" else None
         with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
             data = json.loads(resp.read())
         if not data.get("success"):
@@ -806,7 +828,7 @@ class NasClient:
         url = f"{self.base_url}/auth.cgi?{params}"
         try:
             req = urllib.request.Request(url)
-            ctx = self._ssl_context()
+            ctx = self._ssl_context() if self.scheme == "https" else None
             with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
                 resp.read()
         except Exception:
@@ -822,7 +844,6 @@ class NasClient:
             self._logout(sid)
 
     def _upload_file(self, sid: str, file_path: str) -> dict[str, Any]:
-        import ssl
         boundary = uuid.uuid4().hex
         file_name = os.path.basename(file_path)
 
@@ -845,10 +866,12 @@ class NasClient:
         parts.append(f"\r\n--{boundary}--\r\n".encode())
         body = b"".join(parts)
 
-        url = f"{self.base_url}/entry.cgi"
+        qs = urllib.parse.urlencode({"_sid": sid})
+        url = f"{self.base_url}/entry.cgi?{qs}"
         req = urllib.request.Request(url, data=body, method="POST")
         req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
-        ctx = self._ssl_context()
+        req.add_header("Cookie", f"id={sid}")
+        ctx = self._ssl_context() if self.scheme == "https" else None
         with urllib.request.urlopen(req, context=ctx, timeout=120) as resp:
             data = json.loads(resp.read())
 
@@ -876,10 +899,12 @@ class NasClient:
         password = os.environ.get("NAS_PASSWORD")
         if not token and not (user and password):
             return None
+        scheme = os.environ.get("NAS_SCHEME", "https").lower()
         return NasClient(
             host=values["NAS_HOST"],
             port=values["NAS_PORT"],
             upload_path=values["NAS_UPLOAD_PATH"],
+            scheme=scheme,
             token=token,
             user=user,
             password=password,
@@ -1118,9 +1143,11 @@ def create_request_handler(job_manager: JobManager, edit_manager: EditManager | 
                 try:
                     result = nas_client.upload(file_path)
                 except RuntimeError as exc:
+                    print(f"[NAS] upload error: {exc}")
                     self._send_json({"error": str(exc)}, status_code=502)
                     return
                 except Exception as exc:
+                    print(f"[NAS] unexpected error: {type(exc).__name__}: {exc}")
                     self._send_json({"error": f"上傳失敗：{exc}"}, status_code=502)
                     return
                 self._send_json(result, status_code=200)
@@ -1206,6 +1233,7 @@ class ThreadingHTTPServer(socketserver.ThreadingTCPServer):
 
 def run_server(port: int = PORT) -> None:
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    load_dotenv()
     os.makedirs(DOWNLOADS_DIR, exist_ok=True)
     cookies_file = os.getenv("YTDLP_COOKIES_FILE")
     if not cookies_file:
@@ -1223,7 +1251,7 @@ def run_server(port: int = PORT) -> None:
     edit_manager = EditManager(downloads_dir=DOWNLOADS_DIR)
     nas_client = NasClient.from_env()
     if nas_client:
-        print(f"NAS upload enabled ({nas_client.auth_mode} mode) → {nas_client.upload_path}")
+        print(f"NAS upload enabled ({nas_client.auth_mode} mode, {nas_client.scheme}) → {nas_client.upload_path}")
     else:
         print("WARNING: NAS upload disabled (need NAS_HOST + NAS_PORT + NAS_UPLOAD_PATH + either NAS_TOKEN or NAS_USER/NAS_PASSWORD)")
     handler = create_request_handler(job_manager, edit_manager, nas_client)

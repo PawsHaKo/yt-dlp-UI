@@ -5,3 +5,4 @@ openspec/.vector-search.db*
 .DS_Store
 __pycache__/
 www.youtube.com_cookies.txt
+.env
