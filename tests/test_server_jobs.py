@@ -1,4 +1,6 @@
+import subprocess
 import unittest
+import tempfile
 
 import server
 
@@ -122,6 +124,131 @@ class JobManagerTests(unittest.TestCase):
         updated = manager.set_concurrency_limit(2)
         self.assertEqual(updated["max_concurrent_jobs"], 2)
         self.assertEqual(updated["max_allowed"], 3)
+
+    def test_failed_jobs_are_persisted_and_reloaded(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            failed_jobs_file = f"{tmpdir}/failed_jobs.json"
+            manager = server.JobManager(max_workers=0, failed_jobs_file=failed_jobs_file)
+            self.addCleanup(manager.shutdown)
+            created = manager.create_jobs(["https://youtu.be/fail-me"])
+            job_id = created[0]["id"]
+
+            manager.update_job(job_id, status="failed", error="HTTP Error 403: Forbidden")
+            manager.shutdown()
+
+            reloaded = server.JobManager(max_workers=0, failed_jobs_file=failed_jobs_file)
+            self.addCleanup(reloaded.shutdown)
+            jobs = reloaded.list_jobs()
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["id"], job_id)
+        self.assertEqual(jobs[0]["url"], "https://youtu.be/fail-me")
+        self.assertEqual(jobs[0]["status"], "failed")
+        self.assertEqual(jobs[0]["error"], "HTTP Error 403: Forbidden")
+
+    def test_successful_retry_removes_persisted_failed_job(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            failed_jobs_file = f"{tmpdir}/failed_jobs.json"
+            manager = server.JobManager(max_workers=0, failed_jobs_file=failed_jobs_file)
+            self.addCleanup(manager.shutdown)
+            created = manager.create_jobs(["https://youtu.be/recover-me"])
+            job_id = created[0]["id"]
+            manager.update_job(job_id, status="failed", error="first failure")
+
+            manager.retry_job(job_id)
+            manager.update_job(job_id, status="completed", progress=100, error=None)
+            manager.shutdown()
+
+            reloaded = server.JobManager(max_workers=0, failed_jobs_file=failed_jobs_file)
+            self.addCleanup(reloaded.shutdown)
+            jobs = reloaded.list_jobs()
+
+        self.assertEqual(jobs, [])
+
+    def test_delete_removes_persisted_failed_job(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            failed_jobs_file = f"{tmpdir}/failed_jobs.json"
+            manager = server.JobManager(max_workers=0, failed_jobs_file=failed_jobs_file)
+            self.addCleanup(manager.shutdown)
+            created = manager.create_jobs(["https://youtu.be/delete-me"])
+            job_id = created[0]["id"]
+            manager.update_job(job_id, status="failed", error="gone")
+
+            manager.delete_job(job_id)
+            manager.shutdown()
+
+            reloaded = server.JobManager(max_workers=0, failed_jobs_file=failed_jobs_file)
+            self.addCleanup(reloaded.shutdown)
+            jobs = reloaded.list_jobs()
+
+        self.assertEqual(jobs, [])
+
+    def test_failed_jobs_are_listed_before_non_failed_jobs(self):
+        created = self.manager.create_jobs(
+            [
+                "https://youtu.be/completed",
+                "https://youtu.be/failed-1",
+                "https://youtu.be/queued",
+                "https://youtu.be/failed-2",
+            ]
+        )
+
+        self.manager.update_job(created[0]["id"], status="completed")
+        self.manager.update_job(created[1]["id"], status="failed", error="first failure")
+        self.manager.update_job(created[3]["id"], status="failed", error="second failure")
+
+        jobs = self.manager.list_jobs()
+
+        self.assertEqual(
+            [job["url"] for job in jobs],
+            [
+                "https://youtu.be/failed-1",
+                "https://youtu.be/failed-2",
+                "https://youtu.be/completed",
+                "https://youtu.be/queued",
+            ],
+        )
+
+
+class YtDlpUpdaterTests(unittest.TestCase):
+    def test_updater_reports_success_after_command_exits(self):
+        def runner(command):
+            return subprocess.CompletedProcess(command, 0, "yt-dlp is up to date\n", "")
+
+        updater = server.YtDlpUpdater(
+            command=["brew", "upgrade", "yt-dlp"],
+            runner=runner,
+        )
+
+        started = updater.start_update()
+        updater.wait(timeout=1)
+        status = updater.get_status()
+
+        self.assertTrue(started["started"])
+        self.assertEqual(status["status"], "succeeded")
+        self.assertFalse(status["running"])
+        self.assertEqual(status["return_code"], 0)
+        self.assertIn("yt-dlp is up to date", status["output"])
+        self.assertEqual(status["command"], ["brew", "upgrade", "yt-dlp"])
+
+    def test_updater_reports_failure_and_bounds_output(self):
+        def runner(command):
+            return subprocess.CompletedProcess(command, 1, "stdout\n", "1234567890abcdef")
+
+        updater = server.YtDlpUpdater(
+            command=["brew", "upgrade", "yt-dlp"],
+            runner=runner,
+            output_limit=10,
+        )
+
+        updater.start_update()
+        updater.wait(timeout=1)
+        status = updater.get_status()
+
+        self.assertEqual(status["status"], "failed")
+        self.assertFalse(status["running"])
+        self.assertEqual(status["return_code"], 1)
+        self.assertEqual(status["output"], "7890abcdef")
 
 
 class EditHelpersTests(unittest.TestCase):

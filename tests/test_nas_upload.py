@@ -33,6 +33,21 @@ class MockSynologyHandler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": True}).encode())
                 return
+        if "/entry.cgi" in self.path and "SYNO.FileStation.List" in self.path:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "success": True,
+                "data": {
+                    "files": [
+                        {"name": "song.mp3", "isdir": False},
+                        {"name": "folder", "isdir": True},
+                        {"name": "existing.m4a", "isdir": False},
+                    ],
+                },
+            }).encode())
+            return
         self.send_response(404)
         self.end_headers()
 
@@ -118,6 +133,12 @@ class NasClientTests(unittest.TestCase):
     def test_auth_mode_reflects_credentials(self):
         self.assertEqual(self._make_client(token="t").auth_mode, "token")
         self.assertEqual(self._make_client(user="u", password="p").auth_mode, "password")
+
+    def test_list_files_returns_non_directory_names(self):
+        client = self._make_client(token="my-token")
+        list_files = getattr(client, "list_files", None)
+        self.assertIsNotNone(list_files)
+        self.assertEqual(["song.mp3", "existing.m4a"], list_files())
 
 
 class NasFromEnvTests(unittest.TestCase):
@@ -227,6 +248,19 @@ class NasUploadEndpointTests(unittest.TestCase):
         except error.HTTPError as exc:
             return exc.code, json.loads(exc.read())
 
+    def _get(self, path):
+        req = request.Request(f"http://127.0.0.1:{self.port}{path}")
+        try:
+            with request.urlopen(req) as resp:
+                return resp.status, json.loads(resp.read())
+        except error.HTTPError as exc:
+            raw = exc.read()
+            try:
+                body = json.loads(raw)
+            except json.JSONDecodeError:
+                body = {}
+            return exc.code, body
+
     def test_upload_succeeds(self):
         status, data = self._post("/nas/upload", {"file_name": "song.mp3"})
         self.assertEqual(status, 200)
@@ -245,6 +279,11 @@ class NasUploadEndpointTests(unittest.TestCase):
         with request.urlopen(req) as resp:
             data = json.loads(resp.read())
         self.assertTrue(data["available"])
+
+    def test_nas_files_returns_existing_remote_file_names(self):
+        status, data = self._get("/nas/files")
+        self.assertEqual(status, 200)
+        self.assertEqual(data, ["song.mp3", "existing.m4a"])
 
 
 if __name__ == "__main__":

@@ -19,6 +19,9 @@ DOWNLOADS_DIR = "downloads"
 DEFAULT_CONCURRENT_JOBS = 1
 MAX_WORKER_THREADS = 3
 DEFAULT_COOKIES_FILE = "www.youtube.com_cookies.txt"
+DEFAULT_FAILED_JOBS_FILE = os.path.join("job_state", "failed_jobs.json")
+DEFAULT_YTDLP_UPDATE_COMMAND = ["brew", "upgrade", "yt-dlp"]
+DEFAULT_YTDLP_UPDATE_OUTPUT_LIMIT = 12000
 
 PREVIEW_DIR_NAME = ".tmp-edits"
 PREVIEW_TTL_SECONDS = 2 * 60 * 60
@@ -286,11 +289,13 @@ class JobManager:
         max_workers: int = MAX_WORKER_THREADS,
         concurrency_limit: int | None = None,
         cookies_file: str | None = None,
+        failed_jobs_file: str | None = None,
     ):
         self.downloads_dir = downloads_dir
         self.yt_dlp_path = yt_dlp_path
         self.max_workers = max(0, int(max_workers))
         self.cookies_file = cookies_file
+        self.failed_jobs_file = failed_jobs_file
         if self.max_workers <= 0:
             self._concurrency_limit = 0
         else:
@@ -305,10 +310,12 @@ class JobManager:
         self._shutdown_event = threading.Event()
         self._jobs: dict[str, dict[str, Any]] = {}
         self._job_order: list[str] = []
+        self._persisted_failed_jobs: dict[str, dict[str, Any]] = {}
         self._workers: list[threading.Thread] = []
         self._slot_condition = threading.Condition()
 
         os.makedirs(self.downloads_dir, exist_ok=True)
+        self._load_persisted_failed_jobs()
 
         for index in range(self.max_workers):
             worker = threading.Thread(
@@ -368,7 +375,7 @@ class JobManager:
 
     def list_jobs(self, ids: list[str] | None = None) -> list[dict[str, Any]]:
         with self._lock:
-            ordered_ids = self._job_order
+            ordered_ids = self._ordered_job_ids_locked()
             if ids is not None:
                 filter_ids = set(ids)
                 ordered_ids = [job_id for job_id in ordered_ids if job_id in filter_ids]
@@ -386,6 +393,7 @@ class JobManager:
             if not job:
                 raise KeyError(job_id)
             job.update(updates)
+            self._sync_persisted_failed_job_locked(job_id)
             return dict(job)
 
     def retry_job(self, job_id: str) -> dict[str, Any]:
@@ -424,8 +432,114 @@ class JobManager:
             removed = dict(job)
             del self._jobs[job_id]
             self._job_order = [item for item in self._job_order if item != job_id]
+            if self._persisted_failed_jobs.pop(job_id, None) is not None:
+                self._write_failed_jobs_locked()
 
         return removed
+
+    def _ordered_job_ids_locked(self) -> list[str]:
+        existing_ids = [job_id for job_id in self._job_order if job_id in self._jobs]
+        failed_ids = [
+            job_id
+            for job_id in existing_ids
+            if self._jobs[job_id].get("status") == "failed"
+        ]
+        other_ids = [
+            job_id
+            for job_id in existing_ids
+            if self._jobs[job_id].get("status") != "failed"
+        ]
+        return failed_ids + other_ids
+
+    def _load_persisted_failed_jobs(self) -> None:
+        if not self.failed_jobs_file or not os.path.isfile(self.failed_jobs_file):
+            return
+
+        try:
+            with open(self.failed_jobs_file, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return
+
+        if not isinstance(payload, list):
+            return
+
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            job_id = item.get("id")
+            url = item.get("url")
+            if not isinstance(job_id, str) or not job_id:
+                continue
+            if not isinstance(url, str) or not is_valid_url(url):
+                continue
+            if job_id in self._jobs:
+                continue
+
+            progress = item.get("progress")
+            if not isinstance(progress, (int, float)):
+                progress = 0
+
+            created_at = item.get("created_at")
+            if not isinstance(created_at, str) or not created_at:
+                created_at = utc_now_iso()
+
+            error = item.get("error")
+            if error is not None and not isinstance(error, str):
+                error = str(error)
+
+            file_name = item.get("file_name")
+            if file_name is not None and not isinstance(file_name, str):
+                file_name = None
+
+            job = {
+                "id": job_id,
+                "url": url,
+                "status": "failed",
+                "progress": max(0, min(int(progress), 100)),
+                "speed": None,
+                "eta": None,
+                "file_name": file_name,
+                "error": error,
+                "created_at": created_at,
+            }
+            self._jobs[job_id] = job
+            self._job_order.append(job_id)
+            self._persisted_failed_jobs[job_id] = dict(job)
+
+    def _sync_persisted_failed_job_locked(self, job_id: str) -> None:
+        if not self.failed_jobs_file:
+            return
+
+        job = self._jobs.get(job_id)
+        if not job:
+            return
+
+        status = str(job.get("status", ""))
+        if status == "failed":
+            self._persisted_failed_jobs[job_id] = dict(job)
+            self._write_failed_jobs_locked()
+            return
+
+        if status == "completed" and self._persisted_failed_jobs.pop(job_id, None) is not None:
+            self._write_failed_jobs_locked()
+
+    def _write_failed_jobs_locked(self) -> None:
+        if not self.failed_jobs_file:
+            return
+
+        state_dir = os.path.dirname(os.path.abspath(self.failed_jobs_file))
+        os.makedirs(state_dir, exist_ok=True)
+        ordered_failed_jobs = [
+            dict(self._persisted_failed_jobs[job_id])
+            for job_id in self._job_order
+            if job_id in self._persisted_failed_jobs
+        ]
+        temp_path = f"{self.failed_jobs_file}.tmp"
+        with open(temp_path, "w", encoding="utf-8") as handle:
+            json.dump(ordered_failed_jobs, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        os.replace(temp_path, self.failed_jobs_file)
 
     def _new_job(self, url: str) -> dict[str, Any]:
         return {
@@ -843,6 +957,15 @@ class NasClient:
         finally:
             self._logout(sid)
 
+    def list_files(self) -> list[str]:
+        if self.token:
+            return self._list_files(self.token)
+        sid = self._login()
+        try:
+            return self._list_files(sid)
+        finally:
+            self._logout(sid)
+
     def _upload_file(self, sid: str, file_path: str) -> dict[str, Any]:
         boundary = uuid.uuid4().hex
         file_name = os.path.basename(file_path)
@@ -881,6 +1004,38 @@ class NasClient:
 
         return {"success": True, "file_name": file_name, "upload_path": self.upload_path}
 
+    def _list_files(self, sid: str) -> list[str]:
+        params = urllib.parse.urlencode({
+            "api": "SYNO.FileStation.List",
+            "version": "2",
+            "method": "list",
+            "folder_path": self.upload_path,
+            "_sid": sid,
+        })
+        url = f"{self.base_url}/entry.cgi?{params}"
+        req = urllib.request.Request(url)
+        req.add_header("Cookie", f"id={sid}")
+        ctx = self._ssl_context() if self.scheme == "https" else None
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+            data = json.loads(resp.read())
+
+        if not data.get("success"):
+            error_code = data.get("error", {}).get("code", "unknown")
+            raise RuntimeError(f"NAS list files failed (error code: {error_code})")
+
+        raw_files = data.get("data", {}).get("files", [])
+        if not isinstance(raw_files, list):
+            return []
+
+        file_names: list[str] = []
+        for item in raw_files:
+            if not isinstance(item, dict) or item.get("isdir"):
+                continue
+            name = item.get("name")
+            if isinstance(name, str) and name:
+                file_names.append(name)
+        return file_names
+
     @staticmethod
     def _ssl_context():
         import ssl
@@ -911,9 +1066,115 @@ class NasClient:
         )
 
 
-def create_request_handler(job_manager: JobManager, edit_manager: EditManager | None = None, nas_client: NasClient | None = None):
+class YtDlpUpdater:
+    def __init__(
+        self,
+        command: list[str] | None = None,
+        runner=None,
+        output_limit: int = DEFAULT_YTDLP_UPDATE_OUTPUT_LIMIT,
+    ):
+        self.command = list(command or DEFAULT_YTDLP_UPDATE_COMMAND)
+        self.runner = runner or self._default_runner
+        self.output_limit = max(1, int(output_limit))
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._status: dict[str, Any] = {
+            "status": "idle",
+            "running": False,
+            "started_at": None,
+            "finished_at": None,
+            "return_code": None,
+            "output": "",
+            "command": list(self.command),
+        }
+
+    @staticmethod
+    def _default_runner(command: list[str]):
+        return subprocess.run(command, capture_output=True, text=True, check=False)
+
+    def get_status(self) -> dict[str, Any]:
+        with self._lock:
+            return self._snapshot_locked(started=False)
+
+    def start_update(self) -> dict[str, Any]:
+        with self._lock:
+            if self._status["running"]:
+                return self._snapshot_locked(started=False)
+
+            self._status.update(
+                {
+                    "status": "running",
+                    "running": True,
+                    "started_at": utc_now_iso(),
+                    "finished_at": None,
+                    "return_code": None,
+                    "output": "",
+                    "command": list(self.command),
+                }
+            )
+            thread = threading.Thread(target=self._run_update, name="yt-dlp-updater", daemon=True)
+            self._thread = thread
+            payload = self._snapshot_locked(started=True)
+
+        thread.start()
+        return payload
+
+    def wait(self, timeout: float | None = None) -> bool:
+        thread = self._thread
+        if thread is None:
+            return True
+        thread.join(timeout=timeout)
+        return not thread.is_alive()
+
+    def _run_update(self) -> None:
+        return_code: int | None = None
+        output = ""
+        status = "failed"
+
+        try:
+            result = self.runner(list(self.command))
+            return_code = int(getattr(result, "returncode", 1))
+            stdout = getattr(result, "stdout", "") or ""
+            stderr = getattr(result, "stderr", "") or ""
+            output = self._bounded_output(stdout, stderr)
+            status = "succeeded" if return_code == 0 else "failed"
+        except Exception as exc:
+            output = self._bounded_output("", f"{type(exc).__name__}: {exc}")
+
+        with self._lock:
+            self._status.update(
+                {
+                    "status": status,
+                    "running": False,
+                    "finished_at": utc_now_iso(),
+                    "return_code": return_code,
+                    "output": output,
+                }
+            )
+
+    def _bounded_output(self, stdout: str, stderr: str) -> str:
+        combined = "\n".join(part.strip() for part in (stdout, stderr) if part.strip())
+        if len(combined) <= self.output_limit:
+            return combined
+        return combined[-self.output_limit:]
+
+    def _snapshot_locked(self, started: bool) -> dict[str, Any]:
+        payload = dict(self._status)
+        payload["command"] = list(self.command)
+        payload["started"] = started
+        return payload
+
+
+def create_request_handler(
+    job_manager: JobManager,
+    edit_manager: EditManager | None = None,
+    nas_client: NasClient | None = None,
+    yt_dlp_updater: YtDlpUpdater | None = None,
+):
     if edit_manager is None:
         edit_manager = EditManager(downloads_dir=job_manager.downloads_dir)
+    if yt_dlp_updater is None:
+        yt_dlp_updater = YtDlpUpdater()
 
     class MyHttpRequestHandler(http.server.SimpleHTTPRequestHandler):
         def _send_json(self, payload: Any, status_code: int = 200) -> None:
@@ -967,6 +1228,10 @@ def create_request_handler(job_manager: JobManager, edit_manager: EditManager | 
                 self._send_json(files)
                 return
 
+            if parsed.path == "/yt-dlp/update":
+                self._send_json(yt_dlp_updater.get_status())
+                return
+
             if parsed.path == "/jobs":
                 query = urllib.parse.parse_qs(parsed.query)
                 raw_ids = query.get("ids", [])
@@ -982,6 +1247,20 @@ def create_request_handler(job_manager: JobManager, edit_manager: EditManager | 
 
             if parsed.path == "/nas/status":
                 self._send_json({"available": nas_client is not None})
+                return
+
+            if parsed.path == "/nas/files":
+                if nas_client is None:
+                    self._send_json({"error": "NAS 未設定"}, status_code=501)
+                    return
+                try:
+                    self._send_json(nas_client.list_files())
+                except RuntimeError as exc:
+                    print(f"[NAS] list files error: {exc}")
+                    self._send_json({"error": str(exc)}, status_code=502)
+                except Exception as exc:
+                    print(f"[NAS] unexpected list files error: {type(exc).__name__}: {exc}")
+                    self._send_json({"error": f"讀取 NAS 檔案失敗：{exc}"}, status_code=502)
                 return
 
             preview_match = re.match(r"^/edits/previews/(?P<preview_id>[^/]+)$", parsed.path)
@@ -1035,6 +1314,12 @@ def create_request_handler(job_manager: JobManager, edit_manager: EditManager | 
                     return
 
                 self._send_json(created_jobs[0], status_code=202)
+                return
+
+            if parsed.path == "/yt-dlp/update":
+                status_payload = yt_dlp_updater.start_update()
+                status_code = 202 if status_payload.get("started") else 200
+                self._send_json(status_payload, status_code=status_code)
                 return
 
             if parsed.path == "/settings":
@@ -1247,14 +1532,16 @@ def run_server(port: int = PORT) -> None:
         max_workers=MAX_WORKER_THREADS,
         concurrency_limit=DEFAULT_CONCURRENT_JOBS,
         cookies_file=cookies_file,
+        failed_jobs_file=DEFAULT_FAILED_JOBS_FILE,
     )
     edit_manager = EditManager(downloads_dir=DOWNLOADS_DIR)
+    yt_dlp_updater = YtDlpUpdater()
     nas_client = NasClient.from_env()
     if nas_client:
         print(f"NAS upload enabled ({nas_client.auth_mode} mode, {nas_client.scheme}) → {nas_client.upload_path}")
     else:
         print("WARNING: NAS upload disabled (need NAS_HOST + NAS_PORT + NAS_UPLOAD_PATH + either NAS_TOKEN or NAS_USER/NAS_PASSWORD)")
-    handler = create_request_handler(job_manager, edit_manager, nas_client)
+    handler = create_request_handler(job_manager, edit_manager, nas_client, yt_dlp_updater)
 
     try:
         with ThreadingHTTPServer(("", port), handler) as httpd:

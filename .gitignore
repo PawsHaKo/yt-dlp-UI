@@ -6,3 +6,5 @@ openspec/.vector-search.db*
 __pycache__/
 www.youtube.com_cookies.txt
 .env
+job_state/
+downloads_archive/

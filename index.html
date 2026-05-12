@@ -19,6 +19,43 @@
             --danger: #b23a32;
             --queued: #5c6f7a;
             --postprocess: #8a5a12;
+            --input-bg: #ffffff;
+            --input-border: #acc2cc;
+            --chip-bg: #edf3f6;
+            --chip-text: #2a454e;
+            --job-bg: #fff;
+            --progress-bg: #e8eef2;
+            --file-item-bg: #fcfdfe;
+            --btn-bg: #e4ecef;
+            --btn-text: #1f2a2f;
+            --panel-head-start: #f7fbfd;
+            --panel-head-end: #fefefe;
+        }
+
+        [data-theme="dark"] {
+            --bg-start: #161b1e;
+            --bg-end: #101315;
+            --panel-bg: #1e2529;
+            --ink: #d0d8dc;
+            --muted: #8a9da6;
+            --line: #2f393f;
+            --primary: #29b0c8;
+            --primary-strong: #3ecae0;
+            --success: #4ac076;
+            --danger: #e06b63;
+            --queued: #8fa3ae;
+            --postprocess: #d4a24a;
+            --input-bg: #1a2024;
+            --input-border: #3a474e;
+            --chip-bg: #252d32;
+            --chip-text: #b0c0c8;
+            --job-bg: #1a2024;
+            --progress-bg: #252d32;
+            --file-item-bg: #1a2024;
+            --btn-bg: #2a343a;
+            --btn-text: #d0d8dc;
+            --panel-head-start: #1a2226;
+            --panel-head-end: #1e2529;
         }
 
         * {
@@ -30,8 +67,7 @@
             min-height: 100vh;
             font-family: "IBM Plex Sans", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
             color: var(--ink);
-            background: radial-gradient(circle at 0% 0%, #f5fbff 0%, transparent 45%),
-                        linear-gradient(145deg, var(--bg-start) 0%, var(--bg-end) 100%);
+            background: linear-gradient(145deg, var(--bg-start) 0%, var(--bg-end) 100%);
         }
 
         .shell {
@@ -77,7 +113,7 @@
             gap: 0.75rem;
             padding: 0.9rem 1rem;
             border-bottom: 1px solid var(--line);
-            background: linear-gradient(90deg, #f7fbfd 0%, #fefefe 100%);
+            background: linear-gradient(90deg, var(--panel-head-start) 0%, var(--panel-head-end) 100%);
         }
 
         .panel-title {
@@ -92,13 +128,15 @@
 
         #youtubeUrls {
             width: 100%;
-            border: 1px solid #acc2cc;
+            border: 1px solid var(--input-border);
             border-radius: 10px;
             padding: 0.8rem;
             font-size: 0.95rem;
             line-height: 1.4;
             min-height: 135px;
             resize: vertical;
+            background: var(--input-bg);
+            color: var(--ink);
             transition: border-color 0.15s ease, box-shadow 0.15s ease;
         }
 
@@ -158,8 +196,8 @@
             font-size: 0.8rem;
             font-weight: 600;
             border: 1px solid transparent;
-            background: #edf3f6;
-            color: #2a454e;
+            background: var(--chip-bg);
+            color: var(--chip-text);
         }
 
         .chip-btn {
@@ -207,7 +245,7 @@
             padding: 0.9rem;
             border: 1px dashed var(--line);
             border-radius: 10px;
-            background: #fbfeff;
+            background: var(--panel-bg);
         }
 
         #queueList {
@@ -219,7 +257,7 @@
             border: 1px solid var(--line);
             border-radius: 10px;
             padding: 0.82rem;
-            background: #fff;
+            background: var(--job-bg);
         }
 
         .job-head {
@@ -261,7 +299,7 @@
         .job-progress {
             margin-top: 0.75rem;
             height: 0.74rem;
-            background: #e8eef2;
+            background: var(--progress-bg);
             border-radius: 999px;
             overflow: hidden;
         }
@@ -279,7 +317,7 @@
             flex-wrap: wrap;
             gap: 0.6rem;
             font-size: 0.78rem;
-            color: #476069;
+            color: var(--muted);
         }
 
         .job-error {
@@ -296,24 +334,25 @@
         }
 
         .btn-retry {
-            border: 1px solid #bd6a62;
+            border: 1px solid var(--danger);
             border-radius: 8px;
-            background: #fff;
-            color: #a43f36;
+            background: var(--panel-bg);
+            color: var(--danger);
             font-size: 0.8rem;
             font-weight: 700;
             padding: 0.26rem 0.64rem;
         }
 
         .btn-retry:hover {
-            background: #fff3f2;
+            background: var(--panel-bg);
+            opacity: 0.85;
         }
 
         .btn-delete {
-            border: 1px solid #b23a32;
+            border: 1px solid var(--danger);
             border-radius: 8px;
-            background: #fff;
-            color: #a43f36;
+            background: var(--panel-bg);
+            color: var(--danger);
             font-size: 0.8rem;
             font-weight: 700;
             padding: 0.26rem 0.64rem;
@@ -321,7 +360,7 @@
         }
 
         .btn-delete:hover:not(:disabled) {
-            background: #fff3f2;
+            opacity: 0.85;
         }
 
         .btn-delete:disabled {
@@ -341,7 +380,7 @@
             border: 1px solid var(--line);
             border-radius: 8px;
             padding: 0.55rem 0.7rem;
-            background: #fcfdfe;
+            background: var(--file-item-bg);
             display: flex;
             align-items: center;
             flex-wrap: wrap;
@@ -361,8 +400,8 @@
             padding: 0.25rem 0.55rem;
             font-size: 0.8rem;
             cursor: pointer;
-            background: #e4ecef;
-            color: #1f2a2f;
+            background: var(--btn-bg);
+            color: var(--btn-text);
             white-space: nowrap;
         }
 
@@ -372,28 +411,28 @@
         }
 
         #fileList .nas-btn.ok {
-            background: #d6f0e0;
-            color: #0b6f42;
+            background: var(--success);
+            color: #fff;
         }
 
         #fileList .nas-btn.fail {
-            background: #fce7e5;
-            color: #b23a32;
+            background: var(--danger);
+            color: #fff;
         }
 
         #fileList .file-del-btn {
-            border: 1px solid #d4a0a0;
+            border: 1px solid var(--danger);
             border-radius: 6px;
             padding: 0.25rem 0.55rem;
             font-size: 0.8rem;
             cursor: pointer;
-            background: #fff;
-            color: #b23a32;
+            background: var(--panel-bg);
+            color: var(--danger);
             white-space: nowrap;
         }
 
         #fileList .file-del-btn:hover:not(:disabled) {
-            background: #fce7e5;
+            opacity: 0.85;
         }
 
         #fileList .file-del-btn:disabled {
@@ -402,7 +441,7 @@
         }
 
         #fileList a {
-            color: #0a5f7b;
+            color: var(--primary);
             font-size: 0.9rem;
             text-decoration: none;
             word-break: break-all;
@@ -410,6 +449,66 @@
 
         #fileList a:hover {
             text-decoration: underline;
+        }
+
+        .theme-toggle {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel-bg);
+            color: var(--ink);
+            font-size: 1.2rem;
+            padding: 0.3rem 0.5rem;
+            cursor: pointer;
+            line-height: 1;
+        }
+
+        .theme-toggle:hover {
+            opacity: 0.8;
+        }
+
+        .header-actions {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 0.45rem;
+            max-width: 360px;
+        }
+
+        .maintenance-btn {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--btn-bg);
+            color: var(--btn-text);
+            font-size: 0.86rem;
+            font-weight: 700;
+            padding: 0.38rem 0.62rem;
+            cursor: pointer;
+            line-height: 1.1;
+        }
+
+        .maintenance-btn:hover:not(:disabled) {
+            border-color: var(--primary);
+        }
+
+        .maintenance-btn:disabled {
+            opacity: 0.6;
+            cursor: wait;
+        }
+
+        .maintenance-status {
+            flex-basis: 100%;
+            min-height: 1.1rem;
+            color: var(--muted);
+            font-size: 0.78rem;
+            text-align: right;
+        }
+
+        .header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 0.5rem;
         }
 
         @media (max-width: 768px) {
@@ -434,8 +533,17 @@
 <body>
     <main class="shell">
         <header class="header">
-            <h1>YouTube 音訊下載工具</h1>
-            <p>貼上多個網址後，系統會同時處理最多 3 筆任務，其餘自動排隊。</p>
+            <div class="header-row">
+                <div>
+                    <h1>YouTube 音訊下載工具</h1>
+                    <p>貼上多個網址後，系統會同時處理最多 3 筆任務，其餘自動排隊。</p>
+                </div>
+                <div class="header-actions">
+                    <button id="ytDlpUpdateBtn" class="maintenance-btn" type="button">更新 yt-dlp</button>
+                    <button id="themeToggle" class="theme-toggle" title="切換深色/淺色模式">🌙</button>
+                    <span id="ytDlpUpdateStatus" class="maintenance-status" aria-live="polite"></span>
+                </div>
+            </div>
         </header>
 
         <section class="panel">
@@ -450,8 +558,8 @@
                     ></textarea>
                     <div class="toolbar">
                         <div style="display:flex;align-items:center;gap:8px;">
-                            <label for="concurrencySelect" style="font-size:0.86rem;color:#4f6770;">同時下載</label>
-                            <select id="concurrencySelect" style="border:1px solid #acc2cc;border-radius:8px;padding:0.28rem 0.42rem;font-size:0.86rem;">
+                            <label for="concurrencySelect" style="font-size:0.86rem;color:var(--muted);">同時下載</label>
+                            <select id="concurrencySelect" style="border:1px solid var(--input-border);border-radius:8px;padding:0.28rem 0.42rem;font-size:0.86rem;background:var(--input-bg);color:var(--ink);">
                                 <option value="1">1</option>
                                 <option value="2">2</option>
                                 <option value="3">3</option>
@@ -492,6 +600,14 @@
     </main>
 
     <script>
+        // Theme toggle (runs early to avoid flash)
+        (function initTheme() {
+            const stored = localStorage.getItem("theme");
+            const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+            const theme = stored || (prefersDark ? "dark" : "light");
+            document.documentElement.setAttribute("data-theme", theme);
+        })();
+
         const POLL_INTERVAL_MS = 1000;
 
         const statusMap = {
@@ -515,11 +631,15 @@
         const fileNextBtnEl = document.getElementById("fileNextBtn");
         const filePageInfoEl = document.getElementById("filePageInfo");
         const fileCountEl = document.getElementById("fileCount");
+        const ytDlpUpdateBtnEl = document.getElementById("ytDlpUpdateBtn");
+        const ytDlpUpdateStatusEl = document.getElementById("ytDlpUpdateStatus");
         let allJobs = [];
         let allFiles = [];
         let filePage = 1;
         const FILES_PER_PAGE = 20;
         let nasAvailable = false;
+        const nasFileNames = new Set();
+        let ytDlpUpdatePollTimer = null;
         const activeStatuses = new Set();
 
         formEl.addEventListener("submit", async (event) => {
@@ -831,9 +951,15 @@
 
                 if (nasAvailable) {
                     const nasBtn = document.createElement("button");
-                    nasBtn.className = "nas-btn";
                     nasBtn.setAttribute("data-nas-file", encoded);
-                    nasBtn.textContent = "傳到 NAS";
+                    if (nasFileNames.has(file)) {
+                        nasBtn.className = "nas-btn ok";
+                        nasBtn.textContent = "✓ 已上傳";
+                        nasBtn.disabled = true;
+                    } else {
+                        nasBtn.className = "nas-btn";
+                        nasBtn.textContent = "傳到 NAS";
+                    }
                     actions.appendChild(nasBtn);
                 }
 
@@ -861,7 +987,7 @@
         function setHint(message, isError = false) {
             const hint = document.querySelector(".hint");
             hint.textContent = message;
-            hint.style.color = isError ? "#b23a32" : "#4f6770";
+            hint.style.color = isError ? "var(--danger)" : "var(--muted)";
         }
 
         async function refreshSettings() {
@@ -915,6 +1041,86 @@
             }
         });
 
+        ytDlpUpdateBtnEl.addEventListener("click", async () => {
+            ytDlpUpdateBtnEl.disabled = true;
+            ytDlpUpdateBtnEl.textContent = "更新中…";
+            try {
+                const response = await fetch("/yt-dlp/update", { method: "POST" });
+                const payload = await response.json();
+                if (!response.ok) {
+                    ytDlpUpdateStatusEl.textContent = payload.error || "yt-dlp 更新失敗";
+                    ytDlpUpdateBtnEl.disabled = false;
+                    ytDlpUpdateBtnEl.textContent = "更新 yt-dlp";
+                    return;
+                }
+                renderYtDlpUpdateStatus(payload);
+                if (payload.running) {
+                    startYtDlpUpdatePolling();
+                }
+            } catch (error) {
+                ytDlpUpdateStatusEl.textContent = "yt-dlp 更新連線失敗";
+                ytDlpUpdateBtnEl.disabled = false;
+                ytDlpUpdateBtnEl.textContent = "更新 yt-dlp";
+            }
+        });
+
+        function renderYtDlpUpdateStatus(payload) {
+            const status = payload && payload.status ? payload.status : "idle";
+            const running = Boolean(payload && payload.running);
+            ytDlpUpdateBtnEl.disabled = running;
+            ytDlpUpdateBtnEl.textContent = running ? "更新中…" : "更新 yt-dlp";
+            ytDlpUpdateStatusEl.title = payload && payload.output ? payload.output : "";
+
+            if (running) {
+                ytDlpUpdateStatusEl.textContent = "yt-dlp 更新中";
+                return;
+            }
+            if (status === "succeeded") {
+                ytDlpUpdateStatusEl.textContent = "yt-dlp 已更新";
+                return;
+            }
+            if (status === "failed") {
+                ytDlpUpdateStatusEl.textContent = "yt-dlp 更新失敗";
+                return;
+            }
+            ytDlpUpdateStatusEl.textContent = "";
+        }
+
+        function startYtDlpUpdatePolling() {
+            if (ytDlpUpdatePollTimer) {
+                return;
+            }
+            ytDlpUpdatePollTimer = setInterval(refreshYtDlpUpdateStatus, POLL_INTERVAL_MS);
+        }
+
+        function stopYtDlpUpdatePolling() {
+            if (!ytDlpUpdatePollTimer) {
+                return;
+            }
+            clearInterval(ytDlpUpdatePollTimer);
+            ytDlpUpdatePollTimer = null;
+        }
+
+        async function refreshYtDlpUpdateStatus() {
+            try {
+                const response = await fetch("/yt-dlp/update");
+                const payload = await response.json();
+                if (!response.ok) {
+                    return;
+                }
+                renderYtDlpUpdateStatus(payload);
+                if (payload.running) {
+                    startYtDlpUpdatePolling();
+                } else {
+                    stopYtDlpUpdatePolling();
+                }
+            } catch (error) {
+                stopYtDlpUpdatePolling();
+                ytDlpUpdateBtnEl.disabled = false;
+                ytDlpUpdateBtnEl.textContent = "更新 yt-dlp";
+            }
+        }
+
         async function refreshJobs() {
             try {
                 const response = await fetch("/jobs");
@@ -922,7 +1128,7 @@
                 if (!response.ok || !Array.isArray(jobs)) {
                     return;
                 }
-                allJobs = [...jobs].reverse();
+                allJobs = [...jobs];
                 renderSummary(allJobs);
                 renderQueue(getFilteredJobs(allJobs));
                 if (jobs.some((job) => job.status === "completed")) {
@@ -946,7 +1152,40 @@
             }
         }
 
+        async function refreshNasFiles() {
+            nasFileNames.clear();
+            try {
+                const response = await fetch("/nas/files");
+                const files = await response.json();
+                if (!response.ok || !Array.isArray(files)) {
+                    setHint("NAS 檔案列表讀取失敗，已上傳狀態無法判斷。", true);
+                    return;
+                }
+                for (const file of files) {
+                    if (typeof file === "string" && file) {
+                        nasFileNames.add(file);
+                    }
+                }
+            } catch (error) {
+                setHint("NAS 檔案列表讀取失敗，已上傳狀態無法判斷。", true);
+            }
+        }
+
         async function bootstrap() {
+            const themeToggleEl = document.getElementById("themeToggle");
+            function updateThemeIcon() {
+                const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+                themeToggleEl.textContent = isDark ? "☀️" : "🌙";
+            }
+            updateThemeIcon();
+            themeToggleEl.addEventListener("click", () => {
+                const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+                const next = isDark ? "light" : "dark";
+                document.documentElement.setAttribute("data-theme", next);
+                localStorage.setItem("theme", next);
+                updateThemeIcon();
+            });
+
             filePrevBtnEl.addEventListener("click", () => {
                 if (filePage > 1) {
                     filePage -= 1;
@@ -969,6 +1208,10 @@
                 }
             } catch (_) {}
 
+            if (nasAvailable) {
+                await refreshNasFiles();
+            }
+
             fileListEl.addEventListener("click", async (e) => {
                 const btn = e.target.closest("button[data-nas-file]");
                 if (!btn) return;
@@ -984,13 +1227,10 @@
                     });
                     const data = await resp.json();
                     if (resp.ok) {
-                        btn.textContent = "✓ 已傳送";
+                        nasFileNames.add(fileName);
+                        btn.textContent = "✓ 已上傳";
                         btn.className = "nas-btn ok";
-                        setTimeout(() => {
-                            btn.textContent = "傳到 NAS";
-                            btn.className = "nas-btn";
-                            btn.disabled = false;
-                        }, 3000);
+                        btn.disabled = true;
                     } else {
                         btn.textContent = data.error || "失敗";
                         btn.className = "nas-btn fail";
@@ -1038,7 +1278,7 @@
                 }
             });
 
-            await Promise.all([refreshJobs(), refreshFiles(), refreshSettings()]);
+            await Promise.all([refreshJobs(), refreshFiles(), refreshSettings(), refreshYtDlpUpdateStatus()]);
             setInterval(() => {
                 refreshJobs();
                 refreshFiles();

@@ -8,13 +8,43 @@
         :root {
             color-scheme: light;
             --bg: #eef3f4;
+            --bg-top: #f7fbfc;
             --panel: #ffffff;
+            --panel-head: #f7fbfc;
             --text: #1f2a2f;
             --muted: #5e747d;
             --border: #d7e2e6;
             --primary: #0e7c86;
             --primary-soft: #dff3f5;
             --danger: #b23a32;
+            --input-bg: #ffffff;
+            --input-border: #d7e2e6;
+            --btn-bg: #e4ecef;
+            --btn-text: #1f2a2f;
+            --wave-bg: #fff;
+            --range-item-bg: #fff;
+            --success-text: #0b6f42;
+        }
+
+        [data-theme="dark"] {
+            color-scheme: dark;
+            --bg: #141719;
+            --bg-top: #1a1f23;
+            --panel: #1e2529;
+            --panel-head: #1a2226;
+            --text: #d0d8dc;
+            --muted: #8a9da6;
+            --border: #2f393f;
+            --primary: #29b0c8;
+            --primary-soft: #1a3a3e;
+            --danger: #e06b63;
+            --input-bg: #1a2024;
+            --input-border: #3a474e;
+            --btn-bg: #2a343a;
+            --btn-text: #d0d8dc;
+            --wave-bg: #1a2024;
+            --range-item-bg: #1a2024;
+            --success-text: #4ac076;
         }
 
         * {
@@ -24,7 +54,7 @@
         body {
             margin: 0;
             font-family: "Noto Sans TC", "PingFang TC", sans-serif;
-            background: linear-gradient(180deg, #f7fbfc 0%, var(--bg) 100%);
+            background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg) 100%);
             color: var(--text);
         }
 
@@ -45,7 +75,8 @@
         .panel-head {
             padding: 0.9rem 1rem;
             border-bottom: 1px solid var(--border);
-            background: #f7fbfc;
+            background: var(--panel-head);
+            position: relative;
         }
 
         .panel-body {
@@ -67,14 +98,14 @@
             min-height: 170px;
             border: 1px solid var(--border);
             border-radius: 8px;
-            background: #fff;
+            background: var(--wave-bg);
         }
         #previewWaveform {
             width: 100%;
             min-height: 140px;
             border: 1px solid var(--border);
             border-radius: 8px;
-            background: #fff;
+            background: var(--wave-bg);
             margin-top: 0.6rem;
         }
 
@@ -179,9 +210,11 @@
         input[type="text"],
         select {
             width: 100%;
-            border: 1px solid var(--border);
+            border: 1px solid var(--input-border);
             border-radius: 8px;
             padding: 0.45rem 0.55rem;
+            background: var(--input-bg);
+            color: var(--text);
         }
 
         .row {
@@ -221,8 +254,8 @@
             border-radius: 8px;
             padding: 0.5rem 0.75rem;
             cursor: pointer;
-            background: #e4ecef;
-            color: var(--text);
+            background: var(--btn-bg);
+            color: var(--btn-text);
         }
 
         button.primary {
@@ -230,7 +263,7 @@
             color: #fff;
         }
         button.playing {
-            background: #0b6f42;
+            background: var(--success-text);
             color: #fff;
         }
 
@@ -252,7 +285,7 @@
 
         #ranges li {
             border: 1px solid var(--border);
-            background: #fff;
+            background: var(--range-item-bg);
             border-radius: 8px;
             padding: 0.45rem 0.6rem;
             margin-bottom: 0.4rem;
@@ -326,8 +359,26 @@
             opacity: 0.9;
         }
 
+        .theme-toggle {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--panel);
+            color: var(--text);
+            font-size: 1.2rem;
+            padding: 0.3rem 0.5rem;
+            cursor: pointer;
+            line-height: 1;
+            position: absolute;
+            top: 0.9rem;
+            right: 1rem;
+        }
+
+        .theme-toggle:hover {
+            opacity: 0.8;
+        }
+
         .ok {
-            color: #0b6f42;
+            color: var(--success-text);
         }
 
         .error {
@@ -341,6 +392,7 @@
             <div class="panel-head">
                 <h1>音訊剪輯器</h1>
                 <p class="muted"><a href="/">回到首頁</a> · 檔案：<strong id="fileName"></strong></p>
+                <button id="themeToggle" class="theme-toggle" title="切換深色/淺色模式">🌙</button>
             </div>
             <div class="panel-body">
                 <div class="wave-wrap">
@@ -358,7 +410,7 @@
                     <label style="margin:0;">縮放
                         <input id="zoomRange" type="range" min="0" max="200" value="0" />
                     </label>
-                    <span id="positionText" class="muted">0.00s / 0.00s</span>
+                    <span id="positionText" class="muted">00:00.00 / 00:00.00</span>
                 </div>
                 <div class="grid">
                     <div>
@@ -394,8 +446,11 @@
                 <div class="row spread">
                     <div class="inline-control">
                         <button id="previewPlayBtn">播放預覽 / 暫停</button>
-                        <span id="previewPositionText" class="muted">0.00s / 0.00s</span>
+                        <span id="previewPositionText" class="muted">00:00.00 / 00:00.00</span>
                     </div>
+                    <label style="margin:0;">預覽縮放
+                        <input id="previewZoomRange" type="range" min="0" max="200" value="0" />
+                    </label>
                     <button id="discardPreviewBtn" class="warn">刪除預覽</button>
                 </div>
                 <div id="previewWaveform"></div>
@@ -450,6 +505,7 @@
         const refreshPreviewBtnEl = document.getElementById("refreshPreviewBtn");
         const discardPreviewBtnEl = document.getElementById("discardPreviewBtn");
         const previewPlayBtnEl = document.getElementById("previewPlayBtn");
+        const previewZoomRangeEl = document.getElementById("previewZoomRange");
         const saveAsBtnEl = document.getElementById("saveAsBtn");
         const overwriteBtnEl = document.getElementById("overwriteBtn");
 
@@ -469,16 +525,28 @@
             retryActionBtnEl.style.display = retryFn ? "inline-block" : "none";
         }
 
-        function formatSec(value) {
+        function formatClock(value) {
             if (!Number.isFinite(value) || value < 0) {
-                return "0.00";
+                return "00:00.00";
             }
-            return value.toFixed(2);
+
+            const totalCs = Math.round(value * 100);
+            const hours = Math.floor(totalCs / 360000);
+            const minutes = Math.floor((totalCs % 360000) / 6000);
+            const seconds = Math.floor((totalCs % 6000) / 100);
+            const cs = totalCs % 100;
+            const mm = String(minutes).padStart(2, "0");
+            const ss = String(seconds).padStart(2, "0");
+            const ff = String(cs).padStart(2, "0");
+            if (hours > 0) {
+                return `${hours}:${mm}:${ss}.${ff}`;
+            }
+            return `${mm}:${ss}.${ff}`;
         }
 
         function updateSourcePosition() {
             const current = wavesurfer ? wavesurfer.getCurrentTime() : 0;
-            positionTextEl.textContent = `${formatSec(current)}s / ${formatSec(duration)}s`;
+            positionTextEl.textContent = `${formatClock(current)} / ${formatClock(duration)}`;
         }
 
         function updatePlayButton() {
@@ -489,7 +557,7 @@
 
         function updatePreviewPosition() {
             const current = previewWavesurfer ? previewWavesurfer.getCurrentTime() : 0;
-            previewPositionTextEl.textContent = `${formatSec(current)}s / ${formatSec(previewDuration)}s`;
+            previewPositionTextEl.textContent = `${formatClock(current)} / ${formatClock(previewDuration)}`;
         }
 
         function updatePreviewPlayButton() {
@@ -584,6 +652,7 @@
             });
             previewWavesurfer.on("ready", () => {
                 previewDuration = previewWavesurfer.getDuration();
+                previewWavesurfer.zoom(Number(previewZoomRangeEl.value));
                 updatePreviewPosition();
             });
             previewWavesurfer.on("audioprocess", updatePreviewPosition);
@@ -624,7 +693,7 @@
             deleteRanges.forEach((range, index) => {
                 const li = document.createElement("li");
                 const span = document.createElement("span");
-                span.textContent = `#${index + 1} 刪除 ${range.start_sec.toFixed(2)}s - ${range.end_sec.toFixed(2)}s`;
+                span.textContent = `#${index + 1} 刪除 ${formatClock(range.start_sec)} - ${formatClock(range.end_sec)}`;
                 const btn = document.createElement("button");
                 btn.className = "warn";
                 btn.setAttribute("data-remove-index", String(index));
@@ -874,6 +943,11 @@
                 if (wavesurfer) {
                     wavesurfer.zoom(Number(zoomRangeEl.value));
                     requestAnimationFrame(renderRangeMarkers);
+                }
+            });
+            previewZoomRangeEl.addEventListener("input", () => {
+                if (previewWavesurfer) {
+                    previewWavesurfer.zoom(Number(previewZoomRangeEl.value));
                 }
             });
 

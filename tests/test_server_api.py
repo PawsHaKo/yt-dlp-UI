@@ -82,13 +82,71 @@ class FakeEditManager:
             self.delete_preview(preview_id)
 
 
+class FakeYtDlpUpdater:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.start_calls = 0
+        self.status = {
+            "status": "idle",
+            "running": False,
+            "started": False,
+            "started_at": None,
+            "finished_at": None,
+            "return_code": None,
+            "output": "",
+            "command": ["brew", "upgrade", "yt-dlp"],
+        }
+
+    def start_update(self):
+        if self.status["running"]:
+            payload = dict(self.status)
+            payload["started"] = False
+            return payload
+
+        self.start_calls += 1
+        self.status.update(
+            {
+                "status": "running",
+                "running": True,
+                "started": True,
+                "started_at": "2026-05-12T00:00:00+00:00",
+                "finished_at": None,
+                "return_code": None,
+                "output": "",
+            }
+        )
+        return dict(self.status)
+
+    def finish(self, status="succeeded", return_code=0, output="updated"):
+        self.status.update(
+            {
+                "status": status,
+                "running": False,
+                "started": False,
+                "finished_at": "2026-05-12T00:01:00+00:00",
+                "return_code": return_code,
+                "output": output,
+            }
+        )
+
+    def get_status(self):
+        return dict(self.status)
+
+
 class ApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._tmpdir = tempfile.TemporaryDirectory()
         cls.manager = server.JobManager(downloads_dir=cls._tmpdir.name, max_workers=0)
         cls.edit_manager = FakeEditManager(cls._tmpdir.name)
-        handler = server.create_request_handler(cls.manager, cls.edit_manager)
+        cls.updater = FakeYtDlpUpdater()
+        handler = server.create_request_handler(
+            cls.manager,
+            cls.edit_manager,
+            yt_dlp_updater=cls.updater,
+        )
         cls.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         cls.port = cls.httpd.server_address[1]
         cls.server_thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
@@ -128,6 +186,9 @@ class ApiTests(unittest.TestCase):
             body = exc.read().decode("utf-8")
             parsed = json.loads(body) if body else None
             return exc.code, parsed
+
+    def setUp(self):
+        self.updater.reset()
 
     def test_post_and_get_jobs(self):
         status, payload = self.request_json(
@@ -218,6 +279,32 @@ class ApiTests(unittest.TestCase):
             ("max_concurrent_jobs" in invalid_payload["error"])
             or ("背景工作執行緒" in invalid_payload["error"])
         )
+
+    def test_yt_dlp_update_endpoint_starts_and_prevents_concurrent_updates(self):
+        status, payload = self.request_json("POST", "/yt-dlp/update")
+
+        self.assertEqual(status, 202)
+        self.assertTrue(payload["running"])
+        self.assertTrue(payload["started"])
+        self.assertEqual(self.updater.start_calls, 1)
+
+        second_status, second_payload = self.request_json("POST", "/yt-dlp/update")
+
+        self.assertEqual(second_status, 200)
+        self.assertTrue(second_payload["running"])
+        self.assertFalse(second_payload["started"])
+        self.assertEqual(self.updater.start_calls, 1)
+
+    def test_yt_dlp_update_status_endpoint_reports_finished_state(self):
+        self.updater.finish(status="failed", return_code=1, output="brew failed")
+
+        status, payload = self.request_json("GET", "/yt-dlp/update")
+
+        self.assertEqual(status, 200)
+        self.assertFalse(payload["running"])
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["return_code"], 1)
+        self.assertEqual(payload["output"], "brew failed")
 
     def test_preview_commit_and_delete_endpoints(self):
         status, preview = self.request_json(
