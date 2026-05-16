@@ -8,3 +8,6 @@ www.youtube.com_cookies.txt
 .env
 job_state/
 downloads_archive/
+.tmp-nas/
+server.log
+nohup.out
