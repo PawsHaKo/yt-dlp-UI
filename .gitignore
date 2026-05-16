@@ -10,4 +10,5 @@ job_state/
 downloads_archive/
 .tmp-nas/
 server.log
+server.log.*
 nohup.out

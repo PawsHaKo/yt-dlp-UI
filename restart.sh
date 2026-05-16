@@ -37,6 +37,15 @@ echo "[3/5] git pull…"
 git pull --ff-only
 
 echo "[4/5] 背景啟動 server，輸出寫入 $LOG_FILE"
+# Rotate：若 server.log 超過 10MB，就先搬到 server.log.1（覆蓋舊的 .1）
+ROTATE_BYTES=$((10 * 1024 * 1024))
+if [ -f "$LOG_FILE" ]; then
+    SIZE=$(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
+    if [ "$SIZE" -gt "$ROTATE_BYTES" ]; then
+        echo "  log 已 $SIZE bytes，rotate 到 ${LOG_FILE}.1"
+        mv -f "$LOG_FILE" "${LOG_FILE}.1"
+    fi
+fi
 nohup "$PYTHON" server.py > "$LOG_FILE" 2>&1 &
 NEW_PID=$!
 disown $NEW_PID 2>/dev/null || true
