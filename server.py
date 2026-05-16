@@ -966,6 +966,73 @@ class NasClient:
         finally:
             self._logout(sid)
 
+    def delete_file(self, file_name: str) -> None:
+        if self.token:
+            self._delete_file(self.token, file_name)
+            return
+        sid = self._login()
+        try:
+            self._delete_file(sid, file_name)
+        finally:
+            self._logout(sid)
+
+    def download_file(self, file_name: str, dest_path: str) -> None:
+        if self.token:
+            self._download_file(self.token, file_name, dest_path)
+            return
+        sid = self._login()
+        try:
+            self._download_file(sid, file_name, dest_path)
+        finally:
+            self._logout(sid)
+
+    def _remote_path(self, file_name: str) -> str:
+        base = self.upload_path.rstrip("/")
+        return f"{base}/{file_name}"
+
+    def _delete_file(self, sid: str, file_name: str) -> None:
+        remote_path = self._remote_path(file_name)
+        params = urllib.parse.urlencode({
+            "api": "SYNO.FileStation.Delete",
+            "version": "2",
+            "method": "delete",
+            "path": remote_path,
+            "recursive": "false",
+            "_sid": sid,
+        })
+        url = f"{self.base_url}/entry.cgi?{params}"
+        req = urllib.request.Request(url)
+        req.add_header("Cookie", f"id={sid}")
+        ctx = self._ssl_context() if self.scheme == "https" else None
+        with urllib.request.urlopen(req, context=ctx, timeout=60) as resp:
+            data = json.loads(resp.read())
+        if not data.get("success"):
+            error_code = data.get("error", {}).get("code", "unknown")
+            raise RuntimeError(f"NAS delete failed (error code: {error_code})")
+
+    def _download_file(self, sid: str, file_name: str, dest_path: str) -> None:
+        remote_path = self._remote_path(file_name)
+        params = urllib.parse.urlencode({
+            "api": "SYNO.FileStation.Download",
+            "version": "2",
+            "method": "download",
+            "path": remote_path,
+            "mode": "download",
+            "_sid": sid,
+        })
+        url = f"{self.base_url}/entry.cgi?{params}"
+        req = urllib.request.Request(url)
+        req.add_header("Cookie", f"id={sid}")
+        ctx = self._ssl_context() if self.scheme == "https" else None
+        with urllib.request.urlopen(req, context=ctx, timeout=300) as resp:
+            content_type = resp.headers.get("Content-Type", "")
+            if "application/json" in content_type:
+                data = json.loads(resp.read())
+                error_code = data.get("error", {}).get("code", "unknown") if isinstance(data, dict) else "unknown"
+                raise RuntimeError(f"NAS download failed (error code: {error_code})")
+            with open(dest_path, "wb") as out:
+                shutil.copyfileobj(resp, out)
+
     def _upload_file(self, sid: str, file_path: str) -> dict[str, Any]:
         boundary = uuid.uuid4().hex
         file_name = os.path.basename(file_path)
@@ -1064,6 +1131,87 @@ class NasClient:
             user=user,
             password=password,
         )
+
+
+class NasMusicManager:
+    """Manage music files already on the NAS: adjust volume in place, delete."""
+
+    def __init__(
+        self,
+        nas_client: NasClient,
+        ffmpeg_path: str = "ffmpeg",
+        work_dir: str = ".tmp-nas",
+    ) -> None:
+        self.nas_client = nas_client
+        self.ffmpeg_path = ffmpeg_path
+        self.work_dir = work_dir
+        os.makedirs(self.work_dir, exist_ok=True)
+        self._lock = threading.Lock()
+        self._busy: set[str] = set()
+
+    def _acquire(self, file_name: str) -> None:
+        with self._lock:
+            if file_name in self._busy:
+                raise RuntimeError("檔案正在處理中，請稍候")
+            self._busy.add(file_name)
+
+    def _release(self, file_name: str) -> None:
+        with self._lock:
+            self._busy.discard(file_name)
+
+    def delete(self, file_name: str) -> None:
+        safe_name = sanitize_file_name(file_name)
+        self._acquire(safe_name)
+        try:
+            self.nas_client.delete_file(safe_name)
+        finally:
+            self._release(safe_name)
+
+    def apply_gain(self, file_name: str, gain_db: float) -> dict[str, Any]:
+        safe_name = sanitize_file_name(file_name)
+        if not isinstance(gain_db, (int, float)):
+            raise ValueError("gain_db 必須是數字")
+        gain = float(gain_db)
+        if gain < -30 or gain > 30:
+            raise ValueError("gain_db 必須介於 -30 到 30 之間")
+
+        self._acquire(safe_name)
+        token = uuid.uuid4().hex
+        extension = os.path.splitext(safe_name)[1].lower().lstrip(".")
+        if extension not in OUTPUT_FORMATS:
+            self._release(safe_name)
+            raise ValueError(f"不支援的格式：{extension}")
+
+        session_dir = os.path.join(self.work_dir, token)
+        os.makedirs(session_dir, exist_ok=True)
+        src_path = os.path.join(session_dir, f"in.{extension}")
+        out_path = os.path.join(session_dir, safe_name)
+        try:
+            self.nas_client.download_file(safe_name, src_path)
+
+            codec = OUTPUT_FORMATS[extension]["codec"]
+            command = [
+                self.ffmpeg_path,
+                "-y",
+                "-i",
+                src_path,
+                "-af",
+                f"volume={gain:.2f}dB",
+                "-vn",
+                "-acodec",
+                codec,
+                out_path,
+            ]
+            result = subprocess.run(command, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                message = result.stderr.strip() or result.stdout.strip() or "ffmpeg failed"
+                raise RuntimeError(message)
+
+            self.nas_client.upload(out_path)
+            return {"file_name": safe_name, "gain_db": gain}
+        finally:
+            shutil.rmtree(session_dir, ignore_errors=True)
+            self._release(safe_name)
 
 
 class YtDlpUpdater:
@@ -1170,11 +1318,14 @@ def create_request_handler(
     edit_manager: EditManager | None = None,
     nas_client: NasClient | None = None,
     yt_dlp_updater: YtDlpUpdater | None = None,
+    nas_music_manager: "NasMusicManager | None" = None,
 ):
     if edit_manager is None:
         edit_manager = EditManager(downloads_dir=job_manager.downloads_dir)
     if yt_dlp_updater is None:
         yt_dlp_updater = YtDlpUpdater()
+    if nas_music_manager is None and nas_client is not None:
+        nas_music_manager = NasMusicManager(nas_client)
 
     class MyHttpRequestHandler(http.server.SimpleHTTPRequestHandler):
         def _send_json(self, payload: Any, status_code: int = 200) -> None:
@@ -1215,6 +1366,10 @@ def create_request_handler(
 
             if parsed.path == "/editor":
                 self.path = "editor.html"
+                return http.server.SimpleHTTPRequestHandler.do_GET(self)
+
+            if parsed.path == "/nas":
+                self.path = "nas.html"
                 return http.server.SimpleHTTPRequestHandler.do_GET(self)
 
             if parsed.path == "/files":
@@ -1438,6 +1593,32 @@ def create_request_handler(
                 self._send_json(result, status_code=200)
                 return
 
+            nas_gain_match = re.match(r"^/nas/files/(?P<file_name>.+)/gain$", parsed.path)
+            if nas_gain_match:
+                if nas_music_manager is None:
+                    self._send_json({"error": "NAS 未設定"}, status_code=501)
+                    return
+                raw_name = urllib.parse.unquote(nas_gain_match.group("file_name"))
+                gain_db = data.get("gain_db") if isinstance(data, dict) else None
+                if not isinstance(gain_db, (int, float)):
+                    self._send_json({"error": "gain_db 必須是數字"}, status_code=400)
+                    return
+                try:
+                    result = nas_music_manager.apply_gain(raw_name, float(gain_db))
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status_code=400)
+                    return
+                except RuntimeError as exc:
+                    print(f"[NAS] gain error: {exc}")
+                    self._send_json({"error": str(exc)}, status_code=502)
+                    return
+                except Exception as exc:
+                    print(f"[NAS] unexpected gain error: {type(exc).__name__}: {exc}")
+                    self._send_json({"error": f"音量調整失敗：{exc}"}, status_code=502)
+                    return
+                self._send_json(result, status_code=200)
+                return
+
             retry_match = re.match(r"^/jobs/(?P<job_id>[^/]+)/retry$", parsed.path)
             if retry_match:
                 job_id = retry_match.group("job_id")
@@ -1482,6 +1663,28 @@ def create_request_handler(
                     return
 
                 self._send_json({"deleted": True}, status_code=200)
+                return
+
+            nas_file_match = re.match(r"^/nas/files/(?P<file_name>.+)$", parsed.path)
+            if nas_file_match:
+                if nas_music_manager is None:
+                    self._send_json({"error": "NAS 未設定"}, status_code=501)
+                    return
+                raw_name = urllib.parse.unquote(nas_file_match.group("file_name"))
+                try:
+                    nas_music_manager.delete(raw_name)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status_code=400)
+                    return
+                except RuntimeError as exc:
+                    print(f"[NAS] delete error: {exc}")
+                    self._send_json({"error": str(exc)}, status_code=502)
+                    return
+                except Exception as exc:
+                    print(f"[NAS] unexpected delete error: {type(exc).__name__}: {exc}")
+                    self._send_json({"error": f"刪除失敗：{exc}"}, status_code=502)
+                    return
+                self._send_json({"deleted": True, "file_name": raw_name}, status_code=200)
                 return
 
             file_match = re.match(r"^/files/(?P<file_name>.+)$", parsed.path)
@@ -1541,7 +1744,10 @@ def run_server(port: int = PORT) -> None:
         print(f"NAS upload enabled ({nas_client.auth_mode} mode, {nas_client.scheme}) → {nas_client.upload_path}")
     else:
         print("WARNING: NAS upload disabled (need NAS_HOST + NAS_PORT + NAS_UPLOAD_PATH + either NAS_TOKEN or NAS_USER/NAS_PASSWORD)")
-    handler = create_request_handler(job_manager, edit_manager, nas_client, yt_dlp_updater)
+    nas_music_manager = NasMusicManager(nas_client) if nas_client else None
+    handler = create_request_handler(
+        job_manager, edit_manager, nas_client, yt_dlp_updater, nas_music_manager
+    )
 
     try:
         with ThreadingHTTPServer(("", port), handler) as httpd:

@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NAS 音樂管理</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-start: #eef4f7;
+            --bg-end: #dce8ec;
+            --panel-bg: #ffffff;
+            --ink: #102126;
+            --muted: #4f6770;
+            --line: #c5d5db;
+            --primary: #0b7285;
+            --primary-strong: #095c6b;
+            --success: #1f8a4c;
+            --danger: #b23a32;
+            --input-bg: #ffffff;
+            --input-border: #acc2cc;
+            --chip-bg: #edf3f6;
+            --chip-text: #2a454e;
+            --file-item-bg: #fcfdfe;
+            --btn-bg: #e4ecef;
+            --btn-text: #1f2a2f;
+        }
+
+        [data-theme="dark"] {
+            --bg-start: #161b1e;
+            --bg-end: #101315;
+            --panel-bg: #1e2529;
+            --ink: #d0d8dc;
+            --muted: #8a9da6;
+            --line: #2f393f;
+            --primary: #29b0c8;
+            --primary-strong: #3ecae0;
+            --success: #4ac076;
+            --danger: #e06b63;
+            --input-bg: #1a2024;
+            --input-border: #3a474e;
+            --chip-bg: #252d32;
+            --chip-text: #b0c0c8;
+            --file-item-bg: #1a2024;
+            --btn-bg: #2a343a;
+            --btn-text: #d0d8dc;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "IBM Plex Sans", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+            color: var(--ink);
+            background: linear-gradient(145deg, var(--bg-start) 0%, var(--bg-end) 100%);
+        }
+        .shell { max-width: 1080px; margin: 0 auto; padding: 1.25rem; }
+        .header { margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+        .header h1 { margin: 0; font-size: 1.75rem; font-weight: 700; }
+        .header p { margin: 0.3rem 0 0; color: var(--muted); font-size: 0.92rem; }
+        .header-actions { display: flex; gap: 0.5rem; align-items: center; }
+        .panel {
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: var(--panel-bg);
+            box-shadow: 0 9px 30px rgba(16, 33, 38, 0.08);
+            overflow: hidden;
+        }
+        .panel-head {
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 0.75rem; padding: 0.9rem 1rem; border-bottom: 1px solid var(--line);
+        }
+        .panel-title { margin: 0; font-size: 1rem; font-weight: 700; }
+        .panel-body { padding: 1rem; }
+        .toolbar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+        .search-input {
+            flex: 1; min-width: 180px;
+            border: 1px solid var(--input-border); border-radius: 8px;
+            padding: 0.4rem 0.6rem; background: var(--input-bg); color: var(--ink);
+        }
+        .btn {
+            border: 1px solid var(--line); background: var(--btn-bg); color: var(--btn-text);
+            border-radius: 8px; padding: 0.4rem 0.75rem; font-size: 0.88rem; cursor: pointer;
+            text-decoration: none; display: inline-block;
+        }
+        .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+        .btn-primary:hover { background: var(--primary-strong); }
+        .btn-danger { background: var(--panel-bg); color: var(--danger); border-color: var(--danger); }
+        .btn-danger:hover { background: var(--danger); color: #fff; }
+        .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+        #fileList { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+        #fileList li {
+            border: 1px solid var(--line); border-radius: 10px;
+            padding: 0.7rem 0.85rem; background: var(--file-item-bg);
+            display: flex; flex-direction: column; gap: 0.55rem;
+        }
+        .file-row {
+            display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+        }
+        .file-name {
+            flex: 1; min-width: 200px; font-weight: 600; word-break: break-all;
+        }
+        .file-controls {
+            display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap;
+        }
+        .gain-row {
+            display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap;
+        }
+        .gain-row input[type=range] { flex: 1; min-width: 160px; max-width: 280px; }
+        .gain-value {
+            min-width: 56px; text-align: center; font-weight: 600;
+            background: var(--chip-bg); color: var(--chip-text);
+            border-radius: 999px; padding: 0.2rem 0.55rem; font-size: 0.85rem;
+        }
+        .file-status {
+            font-size: 0.82rem; color: var(--muted); min-height: 1.1rem;
+        }
+        .file-status.success { color: var(--success); }
+        .file-status.error { color: var(--danger); }
+        .empty {
+            text-align: center; padding: 2rem 1rem; color: var(--muted);
+        }
+        #toast {
+            position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
+            background: var(--ink); color: var(--panel-bg); padding: 0.6rem 1rem;
+            border-radius: 8px; font-size: 0.9rem; opacity: 0; transition: opacity 0.2s;
+            pointer-events: none; z-index: 9999;
+        }
+        #toast.show { opacity: 0.95; }
+        .pagination {
+            display: flex; justify-content: center; align-items: center;
+            gap: 0.6rem; margin-top: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <header class="header">
+            <div>
+                <h1>NAS 音樂管理</h1>
+                <p>調整 NAS 上音樂的音量，或刪除不再聽的檔案。</p>
+            </div>
+            <div class="header-actions">
+                <a href="/" class="btn">← 返回下載頁</a>
+                <button id="themeToggle" class="btn" title="切換深色/淺色模式">🌙</button>
+                <button id="refreshBtn" class="btn">重新整理</button>
+            </div>
+        </header>
+
+        <section class="panel">
+            <div class="panel-head">
+                <h2 class="panel-title" id="panelTitle">NAS 檔案</h2>
+                <div class="toolbar">
+                    <input id="searchInput" class="search-input" type="search" placeholder="搜尋檔名…">
+                </div>
+            </div>
+            <div class="panel-body">
+                <div id="loading" class="empty">載入中…</div>
+                <ul id="fileList" style="display:none;"></ul>
+                <div id="empty" class="empty" style="display:none;">沒有檔案。</div>
+                <div id="pagination" class="pagination" style="display:none;">
+                    <button id="prevBtn" class="btn">上一頁</button>
+                    <span id="pageInfo" style="font-size:0.88rem;color:var(--muted);"></span>
+                    <button id="nextBtn" class="btn">下一頁</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="toast"></div>
+
+    <script>
+        (function initTheme() {
+            const stored = localStorage.getItem("theme");
+            const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+            const theme = stored || (prefersDark ? "dark" : "light");
+            document.documentElement.setAttribute("data-theme", theme);
+        })();
+
+        const themeToggle = document.getElementById("themeToggle");
+        themeToggle.addEventListener("click", () => {
+            const cur = document.documentElement.getAttribute("data-theme");
+            const next = cur === "dark" ? "light" : "dark";
+            document.documentElement.setAttribute("data-theme", next);
+            localStorage.setItem("theme", next);
+        });
+
+        const fileListEl = document.getElementById("fileList");
+        const emptyEl = document.getElementById("empty");
+        const loadingEl = document.getElementById("loading");
+        const searchInputEl = document.getElementById("searchInput");
+        const refreshBtnEl = document.getElementById("refreshBtn");
+        const panelTitleEl = document.getElementById("panelTitle");
+        const paginationEl = document.getElementById("pagination");
+        const prevBtnEl = document.getElementById("prevBtn");
+        const nextBtnEl = document.getElementById("nextBtn");
+        const pageInfoEl = document.getElementById("pageInfo");
+        const toastEl = document.getElementById("toast");
+
+        let allFiles = [];
+        let filtered = [];
+        let page = 1;
+        const PER_PAGE = 20;
+        let toastTimer = null;
+
+        function showToast(msg, isError = false) {
+            toastEl.textContent = msg;
+            toastEl.style.background = isError ? "var(--danger)" : "var(--ink)";
+            toastEl.classList.add("show");
+            if (toastTimer) clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2500);
+        }
+
+        async function loadFiles() {
+            loadingEl.style.display = "block";
+            fileListEl.style.display = "none";
+            emptyEl.style.display = "none";
+            paginationEl.style.display = "none";
+            try {
+                const resp = await fetch("/nas/files");
+                if (!resp.ok) {
+                    const data = await resp.json().catch(() => ({}));
+                    throw new Error(data.error || `HTTP ${resp.status}`);
+                }
+                const data = await resp.json();
+                allFiles = Array.isArray(data) ? data.slice().sort() : [];
+                applyFilter();
+            } catch (err) {
+                loadingEl.textContent = `載入失敗：${err.message}`;
+                showToast(`載入失敗：${err.message}`, true);
+            }
+        }
+
+        function applyFilter() {
+            const keyword = searchInputEl.value.trim().toLowerCase();
+            filtered = keyword
+                ? allFiles.filter((name) => name.toLowerCase().includes(keyword))
+                : allFiles.slice();
+            page = 1;
+            render();
+        }
+
+        function render() {
+            loadingEl.style.display = "none";
+            panelTitleEl.textContent = `NAS 檔案（${filtered.length}/${allFiles.length}）`;
+
+            if (filtered.length === 0) {
+                fileListEl.style.display = "none";
+                emptyEl.style.display = "block";
+                paginationEl.style.display = "none";
+                return;
+            }
+
+            const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+            if (page > totalPages) page = totalPages;
+            const start = (page - 1) * PER_PAGE;
+            const slice = filtered.slice(start, start + PER_PAGE);
+
+            fileListEl.innerHTML = "";
+            for (const name of slice) {
+                fileListEl.appendChild(buildItem(name));
+            }
+            fileListEl.style.display = "flex";
+            emptyEl.style.display = "none";
+
+            if (totalPages > 1) {
+                paginationEl.style.display = "flex";
+                pageInfoEl.textContent = `第 ${page} / ${totalPages} 頁`;
+                prevBtnEl.disabled = page <= 1;
+                nextBtnEl.disabled = page >= totalPages;
+            } else {
+                paginationEl.style.display = "none";
+            }
+        }
+
+        function buildItem(fileName) {
+            const li = document.createElement("li");
+
+            const topRow = document.createElement("div");
+            topRow.className = "file-row";
+            const nameEl = document.createElement("div");
+            nameEl.className = "file-name";
+            nameEl.textContent = fileName;
+            topRow.appendChild(nameEl);
+
+            const controls = document.createElement("div");
+            controls.className = "file-controls";
+            const delBtn = document.createElement("button");
+            delBtn.className = "btn btn-danger";
+            delBtn.textContent = "刪除";
+            controls.appendChild(delBtn);
+            topRow.appendChild(controls);
+
+            const gainRow = document.createElement("div");
+            gainRow.className = "gain-row";
+            const slider = document.createElement("input");
+            slider.type = "range";
+            slider.min = "-10";
+            slider.max = "20";
+            slider.step = "0.5";
+            slider.value = "3";
+            const value = document.createElement("span");
+            value.className = "gain-value";
+            value.textContent = "+3.0 dB";
+            const applyBtn = document.createElement("button");
+            applyBtn.className = "btn btn-primary";
+            applyBtn.textContent = "套用音量";
+
+            slider.addEventListener("input", () => {
+                const v = parseFloat(slider.value);
+                value.textContent = `${v >= 0 ? "+" : ""}${v.toFixed(1)} dB`;
+            });
+
+            gainRow.appendChild(slider);
+            gainRow.appendChild(value);
+            gainRow.appendChild(applyBtn);
+
+            const status = document.createElement("div");
+            status.className = "file-status";
+
+            li.appendChild(topRow);
+            li.appendChild(gainRow);
+            li.appendChild(status);
+
+            applyBtn.addEventListener("click", async () => {
+                const gain = parseFloat(slider.value);
+                if (!Number.isFinite(gain)) return;
+                applyBtn.disabled = true;
+                delBtn.disabled = true;
+                status.className = "file-status";
+                status.textContent = `套用音量中（${gain >= 0 ? "+" : ""}${gain.toFixed(1)} dB）…`;
+                try {
+                    const resp = await fetch(`/nas/files/${encodeURIComponent(fileName)}/gain`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ gain_db: gain }),
+                    });
+                    const data = await resp.json().catch(() => ({}));
+                    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+                    status.className = "file-status success";
+                    status.textContent = `已套用 ${gain >= 0 ? "+" : ""}${gain.toFixed(1)} dB`;
+                    showToast(`已更新：${fileName}`);
+                } catch (err) {
+                    status.className = "file-status error";
+                    status.textContent = `失敗：${err.message}`;
+                    showToast(`失敗：${err.message}`, true);
+                } finally {
+                    applyBtn.disabled = false;
+                    delBtn.disabled = false;
+                }
+            });
+
+            delBtn.addEventListener("click", async () => {
+                if (!confirm(`確定刪除 NAS 上的「${fileName}」？此動作無法復原。`)) return;
+                applyBtn.disabled = true;
+                delBtn.disabled = true;
+                status.className = "file-status";
+                status.textContent = "刪除中…";
+                try {
+                    const resp = await fetch(`/nas/files/${encodeURIComponent(fileName)}`, {
+                        method: "DELETE",
+                    });
+                    const data = await resp.json().catch(() => ({}));
+                    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+                    allFiles = allFiles.filter((n) => n !== fileName);
+                    applyFilter();
+                    showToast(`已刪除：${fileName}`);
+                } catch (err) {
+                    status.className = "file-status error";
+                    status.textContent = `失敗：${err.message}`;
+                    showToast(`失敗：${err.message}`, true);
+                    applyBtn.disabled = false;
+                    delBtn.disabled = false;
+                }
+            });
+
+            return li;
+        }
+
+        searchInputEl.addEventListener("input", () => applyFilter());
+        refreshBtnEl.addEventListener("click", () => loadFiles());
+        prevBtnEl.addEventListener("click", () => { if (page > 1) { page--; render(); } });
+        nextBtnEl.addEventListener("click", () => {
+            const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+            if (page < totalPages) { page++; render(); }
+        });
+
+        loadFiles();
+    </script>
+</body>
+</html>
